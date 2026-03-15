@@ -598,6 +598,7 @@ function calculateMonthRound_(ctx) {
 
   const stabilityBonus = getNumberOrDefault_(tech, 'stability_bonus', 0);
   const fireLoyaltyPenalty = getNumberOrDefault_(tech, 'fire_loyalty_penalty', 10);
+  const loyaltyGrowthCap = getNumberOrDefault_(tech, 'loyalty_growth_cap', 10);
 
   const staffComfortBurnoutReliefCoef = getNumberOrDefault_(tech, 'staff_comfort_burnout_relief_coef', 0.03);
   const kitchenBurnoutReliefCoef = getNumberOrDefault_(tech, 'kitchen_burnout_relief_coef', 0.02);
@@ -615,7 +616,9 @@ function calculateMonthRound_(ctx) {
   const trainingQualityEffect = Math.min(trainingBudget * trainingQualityEffectCoef, trainingEffectCap);
 
   const comfortBonus = staffComfort / 20;
-  let loyaltyNext = loyalty + stabilityBonus + comfortBonus - (fireCount * fireLoyaltyPenalty);
+  const loyaltyRaw = loyalty + stabilityBonus + comfortBonus - (fireCount * fireLoyaltyPenalty);
+  const loyaltyMaxStep = loyalty + Math.max(0, loyaltyGrowthCap);
+  let loyaltyNext = Math.min(loyaltyRaw, loyaltyMaxStep);
   loyaltyNext = clamp_(loyaltyNext, stateMin, stateMax);
 
   let serviceNext = service + loyalty * kLoyaltyToService + trainingServiceEffect - burnout * burnoutServicePenaltyCoef;
