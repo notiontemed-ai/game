@@ -377,6 +377,7 @@ function buildTechMasterRegistryRows_(ss) {
     map[String(coeffRows[i][1]).trim()] = coeffRows[i][2];
   }
 
+  const environmentMap = buildEnvironmentMap_(ss);
   const hiddenStart = buildHiddenStateStartMap_(ss);
   const constantsMap = buildConstantsMap_(ss);
   const startCashFromCoeff = getCoefficientValueByCode_(ss, 'start_cash_balance');
@@ -385,6 +386,12 @@ function buildTechMasterRegistryRows_(ss) {
   }
 
   const pick = (k, d) => (k in map && map[k] !== '' && map[k] !== null && map[k] !== undefined) ? map[k] : d;
+  const pickEnvironment = (k, d) => (k in environmentMap && environmentMap[k] !== '' && environmentMap[k] !== null && environmentMap[k] !== undefined) ? environmentMap[k] : d;
+  const pickPriorityEnvironment = (k, d) => {
+    const envVal = pickEnvironment(k, null);
+    if (envVal !== null && envVal !== '' && envVal !== undefined) return envVal;
+    return pick(k, d);
+  };
   const pickConst = (k, d) => (k in constantsMap && constantsMap[k] !== '' && constantsMap[k] !== null && constantsMap[k] !== undefined) ? constantsMap[k] : d;
   const pickHidden = (keys, d) => {
     for (let i = 0; i < keys.length; i++) {
@@ -401,8 +408,8 @@ function buildTechMasterRegistryRows_(ss) {
     ['FIN','doctor_salary_month', pick('doctor_salary_month',250000), 'Master registry'],
     ['FIN','base_admin_cost', pick('base_admin_cost',150000), 'Master registry'],
     ['FIN','start_cash_balance', startCashFromCoeff, 'Master registry (from 08_Coefficients)'],
-    ['FIN','base_visit_price', pick('base_visit_price', pick('initial_visit_price', 3000)), 'Master registry (from 08_Coefficients)'],
-    ['FIN','base_procedure_price', pick('base_procedure_price', pick('initial_procedure_price', 500)), 'Master registry (from 08_Coefficients)'],
+    ['FIN','base_visit_price', pickPriorityEnvironment('base_visit_price', pick('initial_visit_price', 3000)), 'Master registry (Environment -> 08_Coefficients -> default)'],
+    ['FIN','base_procedure_price', pickPriorityEnvironment('base_procedure_price', pick('initial_procedure_price', 500)), 'Master registry (Environment -> 08_Coefficients -> default)'],
 
     ['CAPACITY','work_shifts_per_doctor', pickConst('work_shifts_per_doctor', 15), 'Imported from 07_Constants / Значение (input)'],
     ['CAPACITY','work_shifts_per_month', pickConst('work_shifts_per_doctor', pick('work_shifts_per_month',15)), 'Alias for engine compatibility'],
@@ -415,6 +422,10 @@ function buildTechMasterRegistryRows_(ss) {
 
     ['MODEL','alpha', pick('alpha',1.2), 'Master registry'],
     ['MODEL','beta', pick('beta',2), 'Master registry'],
+    ['MODEL','env_total_market', pickPriorityEnvironment('env_total_market', 1000), 'Master registry (Environment -> 08_Coefficients -> default)'],
+    ['MODEL','env_base_organic', pickPriorityEnvironment('env_base_organic', 100), 'Master registry (Environment -> 08_Coefficients -> default)'],
+    ['MODEL','env_economy', pickPriorityEnvironment('env_economy', 50), 'Master registry (Environment -> 08_Coefficients -> default)'],
+    ['MODEL','env_competition', pickPriorityEnvironment('env_competition', 50), 'Master registry (Environment -> 08_Coefficients -> default)'],
     ['MODEL','base_booking_rate', pick('base_booking_rate',0.5), 'Master registry'],
     ['MODEL','base_treatment_conversion', pick('base_treatment_conversion',0.35), 'Master registry'],
     ['MODEL','base_repeat_rate', pick('base_repeat_rate',0.15), 'Master registry'],
@@ -451,6 +462,36 @@ function buildTechMasterRegistryRows_(ss) {
   });
 
   return rows;
+}
+
+function buildEnvironmentMap_(ss) {
+  if (!ss) return {};
+  const sheet = ss.getSheetByName('01_Environment');
+  if (!sheet) return {};
+
+  const values = sheet.getDataRange().getValues();
+  if (!values || values.length < 2) return {};
+
+  const headers = values[0].map(v => String(v || '').trim());
+  const hm = buildHeaderMapForInit_(headers);
+  const hmLower = buildHeaderMapForInit_(headers.map(h => String(h).toLowerCase()));
+
+  const codeIdx = pickHeaderIndex_(hm, ['parameter_code','code','Код'],
+    pickHeaderIndex_(hmLower, ['parameter_code','code','код'], 1));
+  const valueIdx = pickHeaderIndex_(hm, ['value_input','Стартовое значение (input)'],
+    pickHeaderIndex_(hmLower, ['value_input','стартовое значение (input)'], 3));
+
+  const map = {};
+  for (let r = 1; r < values.length; r++) {
+    const row = values[r];
+    const code = String(row[codeIdx] || '').trim();
+    if (!code) continue;
+    const v = row[valueIdx];
+    if (v === '' || v === null || v === undefined) continue;
+    map[code] = v;
+  }
+
+  return map;
 }
 
 function buildTechRowsFromCoefficients_(ss) {
