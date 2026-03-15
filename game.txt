@@ -614,7 +614,8 @@ function calculateMonthRound_(ctx) {
   const trainingServiceEffect = Math.min(trainingBudget * trainingServiceEffectCoef, trainingEffectCap);
   const trainingQualityEffect = Math.min(trainingBudget * trainingQualityEffectCoef, trainingEffectCap);
 
-  let loyaltyNext = loyalty + stabilityBonus - fireCount * fireLoyaltyPenalty;
+  const comfortBonus = staffComfort / 20;
+  let loyaltyNext = loyalty + stabilityBonus + comfortBonus - (fireCount * fireLoyaltyPenalty);
   loyaltyNext = clamp_(loyaltyNext, stateMin, stateMax);
 
   let serviceNext = service + loyalty * kLoyaltyToService + trainingServiceEffect - burnout * burnoutServicePenaltyCoef;
