@@ -4,7 +4,7 @@
  * Версия с исправлениями:
  * 1) Единая схема ROUND_RESULTS для round 0 и round 1+
  * 2) Автозаполнение TECH_PARAMETERS дефолтами, если лист пуст
- * 3) Удалены дубли утилит и форматтеров
+ * 3) Runtime identity команды берется из SESSION_CONFIG
  ***************************************************************/
 
 const GAME_CONFIG = {
@@ -84,10 +84,10 @@ function initializeSessionFromStartSetup() {
 
   const startSetup = readStartSetup_(startSheet);
   validateStartSetup_(startSetup);
-  const derived = deriveInitialSessionValues_(startSetup);
 
   ensureTechParametersDefaults_(techSheet);
   const techParams = readTechParamsMap_(techSheet);
+  const derived = deriveInitialSessionValues_(startSetup, techParams);
 
   if (techParams.start_cash_balance === '' || techParams.start_cash_balance === null || techParams.start_cash_balance === undefined || isNaN(Number(techParams.start_cash_balance))) {
     throw new Error('В TECH_PARAMETERS должен быть задан start_cash_balance (из 08_Coefficients).');
@@ -98,8 +98,10 @@ function initializeSessionFromStartSetup() {
   clearSheetCompletely_(roundResultsSheet);
 
   writeSessionConfigSheet_(sessionConfigSheet, startSetup, derived, techParams, cfg);
-  writeTeamStateSheet_(teamStateSheet, startSetup, derived, techParams, cfg);
-  writeRoundResultsBaseline_(roundResultsSheet, startSetup, derived, techParams, cfg);
+  const sessionConfig = readSessionConfigMap_(sessionConfigSheet);
+  const runtimeTeamIdentity = getRuntimeTeamIdentity_(sessionConfigSheet, cfg);
+  writeTeamStateSheet_(teamStateSheet, startSetup, derived, techParams, runtimeTeamIdentity);
+  writeRoundResultsBaseline_(roundResultsSheet, startSetup, derived, techParams, sessionConfig, runtimeTeamIdentity);
 
   SpreadsheetApp.flush();
   SpreadsheetApp.getUi().alert(
@@ -115,16 +117,22 @@ function prepareRoundInputForNextMonth() {
   const teamStateSheet = mustGetSheet_(ss, cfg.teamStateSheetName);
   const roundInputSheet = getOrCreateSheet_(ss, cfg.roundInputSheetName);
   const sessionConfigSheet = mustGetSheet_(ss, cfg.sessionConfigSheetName);
+  const roundResultsSheet = mustGetSheet_(ss, cfg.roundResultsSheetName);
   const techSheet = getOrCreateSheet_(ss, cfg.techSheetName);
 
   ensureTechParametersDefaults_(techSheet);
 
-  const latestState = getLatestTeamState_(teamStateSheet, cfg.teamId);
+  const sessionConfig = readSessionConfigMap_(sessionConfigSheet);
+  const runtimeTeamIdentity = getRuntimeTeamIdentity_(sessionConfigSheet, cfg);
+  const latestState = getLatestTeamState_(teamStateSheet, runtimeTeamIdentity.team_id);
+  const latestRoundResult = getLatestRoundResult_(roundResultsSheet, runtimeTeamIdentity.team_id);
+  const techParams = readTechParamsMap_(techSheet);
+
   const nextRoundNo = Number(latestState.round_no) + 1;
 
   ensureRoundInputHeaders_(roundInputSheet);
 
-  const existingRow = findRoundInputRow_(roundInputSheet, cfg.teamId, nextRoundNo);
+  const existingRow = findRoundInputRow_(roundInputSheet, runtimeTeamIdentity.team_id, nextRoundNo);
   if (existingRow) {
     SpreadsheetApp.getUi().alert(
       `ROUND_INPUT для round_no=${nextRoundNo} уже существует в строке ${existingRow}.`
@@ -132,38 +140,59 @@ function prepareRoundInputForNextMonth() {
     return;
   }
 
-  const sessionConfig = readSessionConfigMap_(sessionConfigSheet);
-  const techParams = readTechParamsMap_(techSheet);
+  const initialVisitPrice = Number(sessionConfig.initial_visit_price || 0);
+  const initialProcedurePrice = Number(sessionConfig.initial_procedure_price || 0);
 
-  const defaultVisitPrice = Number(sessionConfig.initial_visit_price || 0);
-  const defaultProcedurePrice = Number(sessionConfig.initial_procedure_price || 0);
+  const defaultVisitPrice = latestRoundResult && Number(latestRoundResult.round_no) >= 1
+    ? Number(latestRoundResult.visit_price || 0)
+    : initialVisitPrice;
+  const defaultProcedurePrice = latestRoundResult && Number(latestRoundResult.round_no) >= 1
+    ? Number(latestRoundResult.procedure_price || 0)
+    : initialProcedurePrice;
+  const maxLoadDefault = latestRoundResult && Number(latestRoundResult.round_no) >= 1
+    ? Number(latestRoundResult.max_doctor_load_percent || 0)
+    : getNumberOrDefault_(latestState, 'max_doctor_load_percent', 100);
 
   const doctorsCurrent = Number(latestState.doctors_current || 0);
-  const visitRooms = Number(latestState.visit_rooms || 0);
-  const ftlRooms = Number(latestState.ftl_rooms || 0);
+  const maxVisitDoctors = Number(latestState.max_visit_doctors || 0);
+  const maxFtlDoctors = Number(latestState.max_ftl_doctors || 0);
 
-  const maxVisitDoctors = visitRooms * 2;
-  const maxFtlDoctors = ftlRooms * 2;
+  let doctorsVisitAssignedDefault;
+  let doctorsFtlAssignedDefault;
 
-  const defaultVisitAssigned = Math.min(doctorsCurrent, maxVisitDoctors);
-  const defaultFtlAssigned = doctorsCurrent - defaultVisitAssigned;
+  if (
+    latestRoundResult &&
+    Number(latestRoundResult.round_no) >= 1 &&
+    Number(latestRoundResult.doctors_visit_assigned || 0) + Number(latestRoundResult.doctors_ftl_assigned || 0) === doctorsCurrent &&
+    Number(latestRoundResult.doctors_visit_assigned || 0) <= maxVisitDoctors &&
+    Number(latestRoundResult.doctors_ftl_assigned || 0) <= maxFtlDoctors
+  ) {
+    doctorsVisitAssignedDefault = Number(latestRoundResult.doctors_visit_assigned || 0);
+    doctorsFtlAssignedDefault = Number(latestRoundResult.doctors_ftl_assigned || 0);
+  } else {
+    doctorsVisitAssignedDefault = Math.min(doctorsCurrent, maxVisitDoctors);
+    doctorsFtlAssignedDefault = doctorsCurrent - doctorsVisitAssignedDefault;
+  }
 
-  const balancedFtl = Math.min(maxFtlDoctors, Math.max(0, defaultFtlAssigned));
-  const balancedVisit = doctorsCurrent - balancedFtl;
+  if (doctorsFtlAssignedDefault > maxFtlDoctors) {
+    throw new Error(
+      `Неконсистентное состояние: doctors_ftl_assigned=${doctorsFtlAssignedDefault}, максимум ${maxFtlDoctors}.`
+    );
+  }
 
   appendRoundInputRow_(roundInputSheet, {
     round_no: nextRoundNo,
-    team_id: cfg.teamId,
-    team_name: cfg.teamName,
+    team_id: runtimeTeamIdentity.team_id,
+    team_name: runtimeTeamIdentity.team_name,
     visit_price: defaultVisitPrice,
     procedure_price: defaultProcedurePrice,
     marketing_budget: getNumberOrDefault_(techParams, 'default_marketing_budget', 0),
     training_budget: getNumberOrDefault_(techParams, 'default_training_budget', 0),
     hire_count: 0,
     fire_count: 0,
-    doctors_visit_assigned: balancedVisit,
-    doctors_ftl_assigned: balancedFtl,
-    max_doctor_load_percent: getNumberOrDefault_(latestState, 'max_doctor_load_percent', 100),
+    doctors_visit_assigned: doctorsVisitAssignedDefault,
+    doctors_ftl_assigned: doctorsFtlAssignedDefault,
+    max_doctor_load_percent: maxLoadDefault,
     comment: 'Autogenerated defaults'
   });
 
@@ -182,12 +211,13 @@ function runNextMonthRound() {
 
   ensureTechParametersDefaults_(techSheet);
 
+  const runtimeTeamIdentity = getRuntimeTeamIdentity_(sessionConfigSheet, cfg);
   const sessionConfig = readSessionConfigMap_(sessionConfigSheet);
   const techParams = readTechParamsMap_(techSheet);
-  const latestState = getLatestTeamState_(teamStateSheet, cfg.teamId);
+  const latestState = getLatestTeamState_(teamStateSheet, runtimeTeamIdentity.team_id);
 
   const nextRoundNo = Number(latestState.round_no) + 1;
-  const roundInput = readRoundInputForRound_(roundInputSheet, cfg.teamId, nextRoundNo);
+  const roundInput = readRoundInputForRound_(roundInputSheet, runtimeTeamIdentity.team_id, nextRoundNo);
 
   validateRoundInput_(roundInput, latestState);
 
@@ -195,11 +225,12 @@ function runNextMonthRound() {
     sessionConfig,
     techParams,
     latestState,
-    roundInput
+    roundInput,
+    runtimeTeamIdentity
   });
 
-  appendRoundResult_(roundResultsSheet, calc, cfg);
-  appendTeamState_(teamStateSheet, calc, cfg);
+  appendRoundResult_(roundResultsSheet, calc, runtimeTeamIdentity);
+  appendTeamState_(teamStateSheet, calc, runtimeTeamIdentity);
 
   SpreadsheetApp.flush();
 
@@ -270,7 +301,6 @@ function validateStartSetup_(setup) {
   const ftlRooms = Number(setup.ftl_rooms);
   const doctorsStart = Number(setup.doctors_start);
 
-
   if (visitRooms + ftlRooms !== totalCabinets) {
     throw new Error(`Сумма visit_rooms (${visitRooms}) и ftl_rooms (${ftlRooms}) должна быть равна total_cabinets (${totalCabinets}).`);
   }
@@ -282,26 +312,27 @@ function validateStartSetup_(setup) {
   if (doctorsStart < 0) throw new Error('Стартовое число врачей не может быть отрицательным.');
 }
 
-function deriveInitialSessionValues_(setup) {
+function deriveInitialSessionValues_(setup, tech) {
   const totalCabinets = Number(setup.selected_total_cabinets);
   const visitRooms = Number(setup.visit_rooms);
   const ftlRooms = Number(setup.ftl_rooms);
   const doctorsStart = Number(setup.doctors_start);
-  const maxLoadPercent = 90;
+  const maxDoctorLoadPercent = getNumberOrDefault_(tech, 'max_doctor_load_percent', 90);
 
   return {
     total_cabinets: totalCabinets,
     visit_rooms: visitRooms,
     ftl_rooms: ftlRooms,
-    max_visit_doctors: visitRooms * 2,
-    max_ftl_doctors: ftlRooms * 2,
-    total_doctor_slots: totalCabinets * 2,
+    max_visit_doctors: 2 * visitRooms,
+    max_ftl_doctors: 2 * ftlRooms,
+    total_doctor_slots: 2 * totalCabinets,
     doctors_current: doctorsStart,
-    load_factor: maxLoadPercent / 100,
-    shifts_per_doctor_per_month: 15,
-    visits_per_shift: 10,
-    procedures_per_shift: 50,
-    procedures_per_course: 10
+    max_doctor_load_percent: maxDoctorLoadPercent,
+    load_factor: maxDoctorLoadPercent / 100,
+    work_shifts_per_month: getNumberOrDefault_(tech, 'work_shifts_per_month', 15),
+    visits_per_shift: getNumberOrDefault_(tech, 'visits_per_shift', 10),
+    procedures_per_shift: getNumberOrDefault_(tech, 'procedures_per_shift', 50),
+    procedures_per_course: getNumberOrDefault_(tech, 'procedures_per_course', 10)
   };
 }
 
@@ -335,13 +366,12 @@ function writeSessionConfigSheet_(sheet, setup, derived, tech, cfg) {
     ['ENVIRONMENT', 'env_economy', getNumberOrDefault_(tech, 'env_economy', 50), 'Стартовая экономика'],
     ['ENVIRONMENT', 'env_competition', getNumberOrDefault_(tech, 'env_competition', 50), 'Стартовая конкуренция'],
     ['ENVIRONMENT', 'env_total_market', getNumberOrDefault_(tech, 'env_total_market', 1000), 'Рынок новых обращений'],
-    ['ENVIRONMENT', 'env_base_demand', getNumberOrDefault_(tech, 'env_base_demand', 50), 'Базовый спрос'],
     ['ENVIRONMENT', 'env_base_organic', getNumberOrDefault_(tech, 'env_base_organic', 100), 'Базовая органика'],
 
-    ['LOAD_POLICY', 'max_doctor_load_percent', getNumberOrDefault_(tech, 'max_doctor_load_percent', 90), 'Макс. загрузка'],
-    ['LOAD_POLICY', 'load_factor', getNumberOrDefault_(tech, 'max_doctor_load_percent', 90) / 100, 'Коэффициент мощности'],
+    ['LOAD_POLICY', 'max_doctor_load_percent', derived.max_doctor_load_percent, 'Макс. загрузка'],
+    ['LOAD_POLICY', 'load_factor', derived.load_factor, 'Коэффициент мощности'],
 
-    ['TECH', 'shifts_per_doctor_per_month', derived.shifts_per_doctor_per_month, 'Смен на врача'],
+    ['TECH', 'work_shifts_per_month', derived.work_shifts_per_month, 'Смен на врача'],
     ['TECH', 'visits_per_shift', derived.visits_per_shift, 'Приемов за смену'],
     ['TECH', 'procedures_per_shift', derived.procedures_per_shift, 'Процедур за смену'],
     ['TECH', 'procedures_per_course', derived.procedures_per_course, 'Процедур в курсе'],
@@ -357,10 +387,12 @@ function writeSessionConfigSheet_(sheet, setup, derived, tech, cfg) {
   formatSimpleSheet_(sheet, 4);
 }
 
-function writeTeamStateSheet_(sheet, setup, derived, tech, cfg) {
+function writeTeamStateSheet_(sheet, setup, derived, tech, runtimeTeamIdentity) {
   const headers = getTeamStateHeaders_();
   const row = [
-    0, cfg.teamId, setup.team_name || cfg.teamName,
+    0,
+    runtimeTeamIdentity.team_id,
+    runtimeTeamIdentity.team_name,
     getNumberOrDefault_(tech, 'reputation_start', 50),
     getNumberOrDefault_(tech, 'service_start', 50),
     getNumberOrDefault_(tech, 'quality_start', 50),
@@ -368,11 +400,16 @@ function writeTeamStateSheet_(sheet, setup, derived, tech, cfg) {
     getNumberOrDefault_(tech, 'loyalty_start', 50),
     getNumberOrDefault_(tech, 'patient_base_start', 200),
     getNumberOrDefault_(tech, 'market_share_start', 0.05),
+    getNumberOrDefault_(tech, 'market_pressure_units_start', 0),
     Number(tech.start_cash_balance),
-    Number(derived.doctors_current), Number(derived.visit_rooms), Number(derived.ftl_rooms),
-    Number(derived.max_visit_doctors), Number(derived.max_ftl_doctors), Number(derived.total_doctor_slots),
-    getNumberOrDefault_(tech, 'max_doctor_load_percent', 90),
-    getNumberOrDefault_(tech, 'max_doctor_load_percent', 90) / 100,
+    Number(derived.doctors_current),
+    Number(derived.visit_rooms),
+    Number(derived.ftl_rooms),
+    Number(derived.max_visit_doctors),
+    Number(derived.max_ftl_doctors),
+    Number(derived.total_doctor_slots),
+    Number(derived.max_doctor_load_percent),
+    Number(derived.load_factor),
     'Initial state created from START_SETUP'
   ];
 
@@ -381,25 +418,62 @@ function writeTeamStateSheet_(sheet, setup, derived, tech, cfg) {
   formatSimpleSheet_(sheet, headers.length);
 }
 
-function writeRoundResultsBaseline_(sheet, setup, derived, tech, cfg) {
+function writeRoundResultsBaseline_(sheet, setup, derived, tech, sessionConfig, runtimeTeamIdentity) {
   const headers = getRoundResultsHeaders_();
+  const envTotalMarket = getNumberOrDefault_(tech, 'env_total_market', Number(sessionConfig.env_total_market || 1000));
+  const marketPressureUnitsStart = getNumberOrDefault_(tech, 'market_pressure_units_start', 0);
+  const pressureShareStart = envTotalMarket > 0 ? clamp_(marketPressureUnitsStart / envTotalMarket, 0, 1) : 0;
+  const baseCpl = getNumberOrDefault_(tech, 'base_cpl', Number(sessionConfig.base_cpl || 1000));
+  const alpha = getNumberOrDefault_(tech, 'alpha', 1.2);
+  const beta = getNumberOrDefault_(tech, 'beta', 2);
+  const effectiveCpl = baseCpl * (1 + alpha * Math.pow(pressureShareStart, beta));
+  const marketShareStart = getNumberOrDefault_(tech, 'market_share_start', 0.05);
+
   const row = [
-    0, cfg.teamId, setup.team_name || cfg.teamName,
-    Number(setup.visit_rooms), Number(setup.ftl_rooms), Number(setup.doctors_start),
-    Number(setup.doctors_start), 0,
-    getNumberOrDefault_(tech, 'max_doctor_load_percent', 90), getNumberOrDefault_(tech, 'max_doctor_load_percent', 90) / 100,
-
-    0, 0, 0, 0, 0, 0, 0, 0, getNumberOrDefault_(tech, 'market_share_start', 0.05),
-
-    getNumberOrDefault_(tech, 'base_visit_price', getNumberOrDefault_(tech, 'initial_visit_price', 3000)), getNumberOrDefault_(tech, 'base_procedure_price', getNumberOrDefault_(tech, 'initial_procedure_price', 500)),
-    0, 0, 0, 0, 0, 0,
-
-    0, 0, 0,
-
-    0, 0, 0, 0, Number(tech.start_cash_balance),
-
-    0, 0, 0, 0,
-
+    0,
+    runtimeTeamIdentity.team_id,
+    runtimeTeamIdentity.team_name,
+    Number(derived.visit_rooms),
+    Number(derived.ftl_rooms),
+    Number(derived.doctors_current),
+    Number(derived.doctors_current),
+    0,
+    Number(derived.max_doctor_load_percent),
+    Number(derived.load_factor),
+    marketPressureUnitsStart,
+    pressureShareStart,
+    effectiveCpl,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    marketShareStart,
+    marketPressureUnitsStart,
+    pressureShareStart,
+    getNumberOrDefault_(tech, 'base_visit_price', getNumberOrDefault_(tech, 'initial_visit_price', 3000)),
+    getNumberOrDefault_(tech, 'base_procedure_price', getNumberOrDefault_(tech, 'initial_procedure_price', 500)),
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    Number(tech.start_cash_balance),
+    0,
+    0,
+    0,
+    0,
     'Round 0 baseline created during session initialization'
   ];
 
@@ -474,13 +548,15 @@ function readRoundInputForRound_(sheet, teamId, roundNo) {
 
 function validateRoundInput_(roundInput, latestState) {
   const doctorsCurrent = Number(latestState.doctors_current);
-  const maxVisitDoctors = Number(latestState.visit_rooms) * 2;
-  const maxFtlDoctors = Number(latestState.ftl_rooms) * 2;
+  const maxVisitDoctors = Number(latestState.max_visit_doctors);
+  const maxFtlDoctors = Number(latestState.max_ftl_doctors);
+  const totalDoctorSlots = Number(latestState.total_doctor_slots);
 
   const visitAssigned = Number(roundInput.doctors_visit_assigned);
   const ftlAssigned = Number(roundInput.doctors_ftl_assigned);
   const hireCount = Number(roundInput.hire_count);
   const fireCount = Number(roundInput.fire_count);
+  const doctorsNext = doctorsCurrent + hireCount - fireCount;
 
   if (visitAssigned + ftlAssigned !== doctorsCurrent) {
     throw new Error(`В ROUND_INPUT сумма doctors_visit_assigned (${visitAssigned}) и doctors_ftl_assigned (${ftlAssigned}) должна быть равна doctors_current (${doctorsCurrent}).`);
@@ -489,6 +565,9 @@ function validateRoundInput_(roundInput, latestState) {
   if (ftlAssigned > maxFtlDoctors) throw new Error(`Слишком много врачей на ФТЛ: ${ftlAssigned}, максимум ${maxFtlDoctors}.`);
   if (hireCount < 0 || fireCount < 0) throw new Error('hire_count и fire_count не могут быть отрицательными.');
   if (fireCount > doctorsCurrent) throw new Error(`Нельзя уволить ${fireCount} при текущих ${doctorsCurrent}.`);
+  if (doctorsNext < 0 || doctorsNext > totalDoctorSlots) {
+    throw new Error(`Будущее число врачей (${doctorsNext}) должно быть в диапазоне [0; ${totalDoctorSlots}].`);
+  }
   if (roundInput.max_doctor_load_percent <= 0 || roundInput.max_doctor_load_percent > 100) throw new Error('max_doctor_load_percent должен быть в диапазоне (0; 100].');
   if (roundInput.visit_price < 0 || roundInput.procedure_price < 0) throw new Error('Цены не могут быть отрицательными.');
   if (roundInput.marketing_budget < 0 || roundInput.training_budget < 0) throw new Error('Бюджеты не могут быть отрицательными.');
@@ -509,10 +588,12 @@ function calculateMonthRound_(ctx) {
   const loyalty = Number(prev.loyalty);
   const patientBase = Number(prev.patient_base);
   const marketSharePrev = Number(prev.market_share);
+  const marketPressureUnits = Number(prev.market_pressure_units || 0);
   const cashBalanceCurrent = Number(prev.cash_balance);
   const doctorsCurrent = Number(prev.doctors_current);
   const visitRooms = Number(prev.visit_rooms);
   const ftlRooms = Number(prev.ftl_rooms);
+  const totalDoctorSlots = Number(prev.total_doctor_slots);
 
   const envEconomy = getNumberOrDefault_(tech, 'env_economy', Number(sessionConfig.env_economy || 50));
   const envCompetition = getNumberOrDefault_(tech, 'env_competition', Number(sessionConfig.env_competition || 50));
@@ -523,7 +604,6 @@ function calculateMonthRound_(ctx) {
   const buildingScore = Number(sessionConfig.selected_building_score);
   const parkingScore = Number(sessionConfig.selected_parking_score);
   const staffComfort = Number(sessionConfig.selected_staff_comfort);
-  const receptionScore = Number(sessionConfig.selected_reception_score);
   const kitchenScore = Number(sessionConfig.selected_kitchen_score);
   const rentCoef = Number(sessionConfig.selected_rent_coef);
 
@@ -544,16 +624,19 @@ function calculateMonthRound_(ctx) {
   const baseAdminCost = getNumberOrDefault_(sessionConfig, 'base_admin_cost', getNumberOrDefault_(tech, 'base_admin_cost', 150000));
   const baseCpl = getNumberOrDefault_(sessionConfig, 'base_cpl', getNumberOrDefault_(tech, 'base_cpl', 1000));
 
-  const shiftsPerDoctor = getNumberOrDefault_(tech, 'work_shifts_per_month', 15);
-  const visitsPerShift = getNumberOrDefault_(tech, 'visits_per_shift', 10);
-  const proceduresPerShift = getNumberOrDefault_(tech, 'procedures_per_shift', 50);
-  const proceduresPerCourse = getNumberOrDefault_(tech, 'procedures_per_course', 10);
+  const workShiftsPerMonth = getNumberOrDefault_(tech, 'work_shifts_per_month', getNumberOrDefault_(sessionConfig, 'work_shifts_per_month', 15));
+  const visitsPerShift = getNumberOrDefault_(tech, 'visits_per_shift', getNumberOrDefault_(sessionConfig, 'visits_per_shift', 10));
+  const proceduresPerShift = getNumberOrDefault_(tech, 'procedures_per_shift', getNumberOrDefault_(sessionConfig, 'procedures_per_shift', 50));
+  const proceduresPerCourse = getNumberOrDefault_(tech, 'procedures_per_course', getNumberOrDefault_(sessionConfig, 'procedures_per_course', 10));
 
   const stateMin = getNumberOrDefault_(tech, 'state_min', 0);
   const stateMax = getNumberOrDefault_(tech, 'state_max', 100);
 
   const alpha = getNumberOrDefault_(tech, 'alpha', 1.2);
   const beta = getNumberOrDefault_(tech, 'beta', 2);
+  const marketPressureRetention = getNumberOrDefault_(tech, 'market_pressure_retention', 0.8);
+  const adsToMarketPressure = getNumberOrDefault_(tech, 'k_ads_to_market_pressure', 1);
+  const marketPressureUnitsStart = getNumberOrDefault_(tech, 'market_pressure_units_start', 0);
 
   const kEconomyToDemand = getNumberOrDefault_(tech, 'k_economy_to_demand', 1.2);
   const kCompetitionToDemand = getNumberOrDefault_(tech, 'k_competition_to_demand', -1.0);
@@ -563,143 +646,124 @@ function calculateMonthRound_(ctx) {
   const baseBookingRate = getNumberOrDefault_(tech, 'base_booking_rate', 0.5);
   const bookingRateMin = getNumberOrDefault_(tech, 'booking_rate_min', 0.05);
   const bookingRateMax = getNumberOrDefault_(tech, 'booking_rate_max', 0.95);
-
   const kVisitPriceToBooking = getNumberOrDefault_(tech, 'k_visit_price_to_booking', -0.2);
   const kReputationToBooking = getNumberOrDefault_(tech, 'k_reputation_to_booking', 0.003);
-  const kServiceToBooking = getNumberOrDefault_(tech, 'k_service_to_booking', 0.002);
   const kBuildingToBooking = getNumberOrDefault_(tech, 'k_building_to_booking', 0.0015);
   const kParkingToBooking = getNumberOrDefault_(tech, 'k_parking_to_booking', 0.001);
 
   const baseTreatmentConversion = getNumberOrDefault_(tech, 'base_treatment_conversion', 0.35);
   const treatmentConversionMin = getNumberOrDefault_(tech, 'treatment_conversion_min', 0.05);
   const treatmentConversionMax = getNumberOrDefault_(tech, 'treatment_conversion_max', 0.95);
-
   const kProcedurePriceToConversion = getNumberOrDefault_(tech, 'k_procedure_price_to_conversion', -0.15);
   const kReputationToConversion = getNumberOrDefault_(tech, 'k_reputation_to_conversion', 0.003);
-  const kServiceToConversion = getNumberOrDefault_(tech, 'k_service_to_conversion', 0.003);
-  const kQualityToConversion = getNumberOrDefault_(tech, 'k_quality_to_conversion', 0.004);
-  const kBurnoutToConversion = getNumberOrDefault_(tech, 'k_burnout_to_conversion', -0.002);
 
   const baseRepeatRate = getNumberOrDefault_(tech, 'base_repeat_rate', 0.1);
   const kReputationToRepeat = getNumberOrDefault_(tech, 'k_reputation_to_repeat', 0.01);
+  const repeatRateMin = getNumberOrDefault_(tech, 'repeat_rate_min', 0);
+  const repeatRateMax = getNumberOrDefault_(tech, 'repeat_rate_max', 0.5);
 
   const trainingServiceEffectCoef = getNumberOrDefault_(tech, 'training_service_effect_coef', 0.00001);
   const trainingQualityEffectCoef = getNumberOrDefault_(tech, 'training_quality_effect_coef', 0.00002);
   const trainingEffectCap = getNumberOrDefault_(tech, 'training_effect_cap', 5);
-
   const burnoutServicePenaltyCoef = getNumberOrDefault_(tech, 'burnout_service_penalty_coef', 0.10);
   const burnoutQualityPenaltyCoef = getNumberOrDefault_(tech, 'burnout_quality_penalty_coef', 0.15);
   const kLoyaltyToService = getNumberOrDefault_(tech, 'k_loyalty_to_service', 0.03);
   const kLoyaltyToQuality = getNumberOrDefault_(tech, 'k_loyalty_to_quality', 0.03);
-
   const qualityReputationBonusCoef = getNumberOrDefault_(tech, 'quality_reputation_bonus_coef', 0.05);
   const serviceReputationBonusCoef = getNumberOrDefault_(tech, 'service_reputation_bonus_coef', 0.05);
   const aggressiveSalesReputationPenalty = getNumberOrDefault_(tech, 'aggressive_sales_reputation_penalty', 0.08);
-
   const stabilityBonus = getNumberOrDefault_(tech, 'stability_bonus', 0);
   const fireLoyaltyPenalty = getNumberOrDefault_(tech, 'fire_loyalty_penalty', 10);
   const loyaltyGrowthCap = getNumberOrDefault_(tech, 'loyalty_growth_cap', 10);
-
   const staffComfortBurnoutReliefCoef = getNumberOrDefault_(tech, 'staff_comfort_burnout_relief_coef', 0.03);
   const kitchenBurnoutReliefCoef = getNumberOrDefault_(tech, 'kitchen_burnout_relief_coef', 0.02);
-
   const burnoutGrowthMedium = getNumberOrDefault_(tech, 'burnout_growth_medium', 1);
   const burnoutGrowthHigh = getNumberOrDefault_(tech, 'burnout_growth_high', 3);
   const burnoutRecoveryIfLowLoad = getNumberOrDefault_(tech, 'burnout_recovery_if_low_load', -2);
-
   const pressureIndex = getNumberOrDefault_(sessionConfig, 'pressure_index', 0);
 
-  // -----------------------------------------------------------
-  // Hidden state (pre-round deltas for repeat model)
-  // -----------------------------------------------------------
-  const trainingServiceEffect = Math.min(trainingBudget * trainingServiceEffectCoef, trainingEffectCap);
-  const trainingQualityEffect = Math.min(trainingBudget * trainingQualityEffectCoef, trainingEffectCap);
-
-  const comfortBonus = staffComfort / 20;
-  const loyaltyRaw = loyalty + stabilityBonus + comfortBonus - (fireCount * fireLoyaltyPenalty);
-  const loyaltyMaxStep = loyalty + Math.max(0, loyaltyGrowthCap);
-  let loyaltyNext = Math.min(loyaltyRaw, loyaltyMaxStep);
-  loyaltyNext = clamp_(loyaltyNext, stateMin, stateMax);
-
-  let serviceNext = service + loyalty * kLoyaltyToService + trainingServiceEffect - burnout * burnoutServicePenaltyCoef;
-  serviceNext = clamp_(serviceNext, stateMin, stateMax);
-
-  let qualityNext = quality + loyalty * kLoyaltyToQuality + trainingQualityEffect - burnout * burnoutQualityPenaltyCoef;
-  qualityNext = clamp_(qualityNext, stateMin, stateMax);
-
-  const pressurePenalty = pressureIndex * aggressiveSalesReputationPenalty;
-  let reputationNext = reputation + qualityNext * qualityReputationBonusCoef + serviceNext * serviceReputationBonusCoef - pressurePenalty;
-  reputationNext = clamp_(reputationNext, stateMin, stateMax);
-
-  const deltaReputation = reputationNext - reputation;
-
-  let repeatRate =
-    baseRepeatRate +
-    kReputationToRepeat * deltaReputation;
-
-  // Жесткий clamp по ТЗ
-  repeatRate = clamp_(repeatRate, 0, 0.5);
-
-  const visitCapacity = doctorsVisitAssigned * shiftsPerDoctor * visitsPerShift;
-  const procedureCapacity = doctorsFtlAssigned * shiftsPerDoctor * proceduresPerShift;
+  if (marketPressureRetention < 0 || marketPressureRetention > 1) {
+    throw new Error('market_pressure_retention должен быть в диапазоне [0; 1].');
+  }
+  if (adsToMarketPressure < 0) {
+    throw new Error('k_ads_to_market_pressure не может быть отрицательным.');
+  }
+  if (repeatRateMin < 0 || repeatRateMax < repeatRateMin) {
+    throw new Error('Некорректные границы repeat_rate_min / repeat_rate_max.');
+  }
 
   const loadFactor = maxDoctorLoadPercent / 100;
+  const visitCapacity = doctorsVisitAssigned * workShiftsPerMonth * visitsPerShift;
+  const procedureCapacity = doctorsFtlAssigned * workShiftsPerMonth * proceduresPerShift;
   const visitCapacityLimited = visitCapacity * loadFactor;
   const procedureCapacityLimited = procedureCapacity * loadFactor;
 
-  const marketingSteps = 10;
-  const marketingBudgetPerStep = safeDiv_(marketingBudget, marketingSteps);
-  let marketShareDynamic = marketSharePrev;
-  let effectiveCpl = baseCpl * (1 + alpha * Math.pow(Math.max(marketShareDynamic, 0), beta));
-  let adLeads = 0;
+  const pressureShareStart = envTotalMarket > 0 ? clamp_(marketPressureUnits / envTotalMarket, 0, 1) : 0;
 
-  for (let step = 0; step < marketingSteps; step += 1) {
-    effectiveCpl = baseCpl * (1 + alpha * Math.pow(Math.max(marketShareDynamic, 0), beta));
-    const stepLeads = safeDiv_(marketingBudgetPerStep, effectiveCpl);
+  const marketingSteps = 10;
+  const stepBudget = safeDiv_(marketingBudget, marketingSteps);
+  let adLeads = 0;
+  let effectiveCpl = baseCpl * (1 + alpha * Math.pow(pressureShareStart, beta));
+
+  for (let i = 1; i <= marketingSteps; i += 1) {
+    const pressureShareStep = envTotalMarket > 0
+      ? clamp_((marketPressureUnits + adsToMarketPressure * adLeads) / envTotalMarket, 0, 1)
+      : 0;
+    effectiveCpl = baseCpl * (1 + alpha * Math.pow(pressureShareStep, beta));
+    const stepLeads = effectiveCpl > 0 ? stepBudget / effectiveCpl : 0;
     adLeads += stepLeads;
-    marketShareDynamic = envTotalMarket > 0 ? Math.min(adLeads, envTotalMarket) / envTotalMarket : 0;
   }
 
-  let organicLeads =
-    envBaseOrganic +
-    kEconomyToDemand * envEconomy +
-    kCompetitionToDemand * envCompetition +
-    kReputationToOrganic * deltaReputation +
-    kLocationToOrganic * locationScore;
-  organicLeads = Math.max(0, organicLeads);
+  const pressureShareEnd = envTotalMarket > 0
+    ? clamp_((marketPressureUnits + adsToMarketPressure * adLeads) / envTotalMarket, 0, 1)
+    : 0;
+  const marketPressureUnitsNext = marketPressureUnits * marketPressureRetention + adsToMarketPressure * adLeads;
 
-  const repeatLeads = Math.max(0, patientBase * repeatRate);
+  const organicLeads = Math.max(
+    0,
+    envBaseOrganic *
+      kEconomyToDemand * envEconomy *
+      kCompetitionToDemand * envCompetition *
+      kReputationToOrganic * reputation *
+      kLocationToOrganic * locationScore
+  );
+
+  const repeatRateRaw = baseRepeatRate + kReputationToRepeat * reputation;
+  const repeatRate = clamp_(repeatRateRaw, repeatRateMin, repeatRateMax);
+  const repeatLeads = patientBase * repeatRate;
+
   const newLeadsRaw = adLeads + organicLeads;
-  const newLeads = Math.min(newLeadsRaw, envTotalMarket);
+  const newLeads = envTotalMarket > 0 ? Math.min(newLeadsRaw, envTotalMarket) : 0;
   const totalLeads = newLeads + repeatLeads;
   const marketShare = envTotalMarket > 0 ? newLeads / envTotalMarket : 0;
 
-  const visitPriceIndex = safeDiv_(visitPrice, baseVisitPrice);
-  let bookingRate =
-    baseBookingRate +
-    kVisitPriceToBooking * visitPriceIndex +
-    kReputationToBooking * reputation +
-    kServiceToBooking * service +
-    kBuildingToBooking * buildingScore +
+  const visitPriceIndex = baseVisitPrice > 0 ? visitPrice / baseVisitPrice : 0;
+  const bookingRateRaw =
+    baseBookingRate *
+    kVisitPriceToBooking * visitPriceIndex *
+    kReputationToBooking * reputation *
+    kBuildingToBooking * buildingScore *
     kParkingToBooking * parkingScore;
-  bookingRate = clamp_(bookingRate, bookingRateMin, bookingRateMax);
-
+  const bookingRate = clamp_(bookingRateRaw, bookingRateMin, bookingRateMax);
   const bookings = totalLeads * bookingRate;
   const visitsDone = Math.min(bookings, visitCapacityLimited);
 
-  const procedurePriceIndex = safeDiv_(procedurePrice, baseProcedurePrice);
-  let treatmentConversion =
-    baseTreatmentConversion +
-    kProcedurePriceToConversion * procedurePriceIndex +
-    kReputationToConversion * reputation +
-    kServiceToConversion * service +
-    kQualityToConversion * quality +
-    kBurnoutToConversion * burnout;
-  treatmentConversion = clamp_(treatmentConversion, treatmentConversionMin, treatmentConversionMax);
-
+  const procedurePriceIndex = baseProcedurePrice > 0 ? procedurePrice / baseProcedurePrice : 0;
+  const treatmentConversionRaw =
+    baseTreatmentConversion *
+    kProcedurePriceToConversion * procedurePriceIndex *
+    kReputationToConversion * reputation;
+  const treatmentConversion = clamp_(treatmentConversionRaw, treatmentConversionMin, treatmentConversionMax);
   const treatmentPatientsPotential = visitsDone * treatmentConversion;
-  const treatmentPatients = Math.min(treatmentPatientsPotential, procedureCapacityLimited / proceduresPerCourse);
+  const treatmentPatients = Math.min(treatmentPatientsPotential, safeDiv_(procedureCapacityLimited, proceduresPerCourse));
   const proceduresDone = treatmentPatients * proceduresPerCourse;
+
+  const newShare = totalLeads > 0 ? newLeads / totalLeads : 0;
+  const repeatShare = totalLeads > 0 ? repeatLeads / totalLeads : 0;
+  const newVisitsDone = visitsDone * newShare;
+  const repeatVisitsDone = visitsDone * repeatShare;
+  const newTreatmentPatients = treatmentPatients * newShare;
+  const repeatTreatmentPatients = treatmentPatients * repeatShare;
 
   const visitRevenue = visitsDone * visitPrice;
   const procedureRevenue = proceduresDone * procedurePrice;
@@ -708,31 +772,66 @@ function calculateMonthRound_(ctx) {
   const rentMonth = baseRentMonth * rentCoef;
   const doctorCost = doctorsCurrent * doctorSalaryMonth;
   const totalCost = rentMonth + doctorCost + marketingBudget + trainingBudget + baseAdminCost;
-
   const financialResult = totalRevenue - totalCost;
   const cashBalanceNext = cashBalanceCurrent + financialResult;
 
-  const visitLoadActual = visitCapacity > 0 ? visitsDone / visitCapacity : 0;
-  const procedureLoadActual = procedureCapacity > 0 ? proceduresDone / procedureCapacity : 0;
+  const visitLoadActual = visitCapacityLimited > 0 ? visitsDone / visitCapacityLimited : 0;
+  const procedureLoadActual = procedureCapacityLimited > 0 ? proceduresDone / procedureCapacityLimited : 0;
 
   let avgLoadActual = 0;
-  if (visitCapacity > 0 && procedureCapacity > 0) avgLoadActual = (visitLoadActual + procedureLoadActual) / 2;
-  else if (visitCapacity > 0) avgLoadActual = visitLoadActual;
-  else if (procedureCapacity > 0) avgLoadActual = procedureLoadActual;
+  if (visitCapacityLimited > 0 && procedureCapacityLimited > 0) avgLoadActual = (visitLoadActual + procedureLoadActual) / 2;
+  else if (visitCapacityLimited > 0) avgLoadActual = visitLoadActual;
+  else if (procedureCapacityLimited > 0) avgLoadActual = procedureLoadActual;
 
   let burnoutGrowth = 0;
   if (avgLoadActual < 0.8) burnoutGrowth = burnoutRecoveryIfLowLoad;
   else if (avgLoadActual < 0.9) burnoutGrowth = burnoutGrowthMedium;
   else burnoutGrowth = burnoutGrowthHigh;
 
-  let burnoutNext = burnout + burnoutGrowth - staffComfort * staffComfortBurnoutReliefCoef - kitchenScore * kitchenBurnoutReliefCoef;
-  burnoutNext = clamp_(burnoutNext, stateMin, stateMax);
+  const trainingServiceEffect = Math.min(trainingBudget * trainingServiceEffectCoef, trainingEffectCap);
+  const trainingQualityEffect = Math.min(trainingBudget * trainingQualityEffectCoef, trainingEffectCap);
 
-  const patientBaseNext = patientBase + treatmentPatients;
+  const comfortBonus = staffComfort / 20;
+  const loyaltyRaw = loyalty + stabilityBonus + comfortBonus - fireCount * fireLoyaltyPenalty;
+  const loyaltyMaxStep = loyalty + Math.max(0, loyaltyGrowthCap);
+  const loyaltyNext = clamp_(Math.min(loyaltyRaw, loyaltyMaxStep), stateMin, stateMax);
+
+  const serviceNext = clamp_(
+    service + loyalty * kLoyaltyToService + trainingServiceEffect - burnout * burnoutServicePenaltyCoef,
+    stateMin,
+    stateMax
+  );
+
+  const qualityNext = clamp_(
+    quality + loyalty * kLoyaltyToQuality + trainingQualityEffect - burnout * burnoutQualityPenaltyCoef,
+    stateMin,
+    stateMax
+  );
+
+  const pressurePenalty = pressureIndex * aggressiveSalesReputationPenalty;
+  const reputationNext = clamp_(
+    reputation + qualityNext * qualityReputationBonusCoef + serviceNext * serviceReputationBonusCoef - pressurePenalty,
+    stateMin,
+    stateMax
+  );
+
+  const burnoutNext = clamp_(
+    burnout + burnoutGrowth - staffComfort * staffComfortBurnoutReliefCoef - kitchenScore * kitchenBurnoutReliefCoef,
+    stateMin,
+    stateMax
+  );
+
+  const patientBaseNext = patientBase + newTreatmentPatients;
   const doctorsNext = doctorsCurrent + hireCount - fireCount;
+
+  if (doctorsNext < 0 || doctorsNext > totalDoctorSlots) {
+    throw new Error(`После найма/увольнения число врачей (${doctorsNext}) вне диапазона [0; ${totalDoctorSlots}].`);
+  }
 
   return {
     round_no: roundNo,
+    team_id: inp.team_id,
+    team_name: inp.team_name,
     visit_price: visitPrice,
     procedure_price: procedurePrice,
     marketing_budget: marketingBudget,
@@ -747,11 +846,8 @@ function calculateMonthRound_(ctx) {
     doctors_current: doctorsCurrent,
     visit_rooms: visitRooms,
     ftl_rooms: ftlRooms,
-    visit_capacity: visitCapacity,
-    procedure_capacity: procedureCapacity,
-    visit_capacity_limited: visitCapacityLimited,
-    procedure_capacity_limited: procedureCapacityLimited,
-
+    market_pressure_units_start: marketPressureUnits,
+    pressure_share_start: pressureShareStart,
     effective_cpl: effectiveCpl,
     ad_leads: adLeads,
     organic_leads: organicLeads,
@@ -761,13 +857,18 @@ function calculateMonthRound_(ctx) {
     new_leads: newLeads,
     total_leads: totalLeads,
     market_share: marketShare,
+    market_pressure_units_end: marketPressureUnitsNext,
+    pressure_share_end: pressureShareEnd,
 
-    visit_price_index: visitPriceIndex,
-    procedure_price_index: procedurePriceIndex,
     booking_rate: bookingRate,
-    bookings, visits_done: visitsDone, treatment_conversion: treatmentConversion,
-    treatment_patients_potential: treatmentPatientsPotential,
+    bookings: bookings,
+    visits_done: visitsDone,
+    new_visits_done: newVisitsDone,
+    repeat_visits_done: repeatVisitsDone,
+    treatment_conversion: treatmentConversion,
     treatment_patients: treatmentPatients,
+    new_treatment_patients: newTreatmentPatients,
+    repeat_treatment_patients: repeatTreatmentPatients,
     procedures_done: proceduresDone,
 
     visit_revenue: visitRevenue,
@@ -785,40 +886,73 @@ function calculateMonthRound_(ctx) {
     burnout_next: burnoutNext,
     loyalty_next: loyaltyNext,
     patient_base_next: patientBaseNext,
-
     doctors_next: doctorsNext,
 
     visit_load_actual: visitLoadActual,
     procedure_load_actual: procedureLoadActual,
     avg_load_actual: avgLoadActual,
-    burnout_growth: burnoutGrowth
+    burnout_growth: burnoutGrowth,
+
+    work_shifts_per_month: workShiftsPerMonth,
+    visits_per_shift: visitsPerShift,
+    procedures_per_shift: proceduresPerShift,
+    procedures_per_course: proceduresPerCourse,
+    market_share_prev: marketSharePrev,
+    market_pressure_units_default: marketPressureUnitsStart
   };
 }
 
-function appendRoundResult_(sheet, calc, cfg) {
+function appendRoundResult_(sheet, calc, runtimeTeamIdentity) {
   ensureRoundResultsHeaders_(sheet);
 
   const row = [
-    calc.round_no, cfg.teamId, cfg.teamName,
-
-    calc.visit_rooms, calc.ftl_rooms, calc.doctors_current,
-    calc.doctors_visit_assigned, calc.doctors_ftl_assigned,
-
-    calc.max_doctor_load_percent, calc.load_factor,
-
-    calc.effective_cpl, calc.ad_leads, calc.organic_leads, calc.repeat_rate, calc.repeat_leads,
-    calc.new_leads_raw, calc.new_leads, calc.total_leads, calc.market_share,
-
-    calc.visit_price, calc.procedure_price,
-    calc.booking_rate, calc.bookings, calc.visits_done, calc.treatment_conversion,
-    calc.treatment_patients, calc.procedures_done,
-
-    calc.visit_revenue, calc.procedure_revenue, calc.total_revenue,
-
-    calc.rent_month, calc.doctor_cost, calc.total_cost, calc.financial_result, calc.cash_balance_next,
-
-    calc.visit_load_actual, calc.procedure_load_actual, calc.avg_load_actual, calc.burnout_growth,
-
+    calc.round_no,
+    runtimeTeamIdentity.team_id,
+    runtimeTeamIdentity.team_name,
+    calc.visit_rooms,
+    calc.ftl_rooms,
+    calc.doctors_current,
+    calc.doctors_visit_assigned,
+    calc.doctors_ftl_assigned,
+    calc.max_doctor_load_percent,
+    calc.load_factor,
+    calc.market_pressure_units_start,
+    calc.pressure_share_start,
+    calc.effective_cpl,
+    calc.ad_leads,
+    calc.organic_leads,
+    calc.repeat_rate,
+    calc.repeat_leads,
+    calc.new_leads_raw,
+    calc.new_leads,
+    calc.total_leads,
+    calc.market_share,
+    calc.market_pressure_units_end,
+    calc.pressure_share_end,
+    calc.visit_price,
+    calc.procedure_price,
+    calc.booking_rate,
+    calc.bookings,
+    calc.visits_done,
+    calc.new_visits_done,
+    calc.repeat_visits_done,
+    calc.treatment_conversion,
+    calc.treatment_patients,
+    calc.new_treatment_patients,
+    calc.repeat_treatment_patients,
+    calc.procedures_done,
+    calc.visit_revenue,
+    calc.procedure_revenue,
+    calc.total_revenue,
+    calc.rent_month,
+    calc.doctor_cost,
+    calc.total_cost,
+    calc.financial_result,
+    calc.cash_balance_next,
+    calc.visit_load_actual,
+    calc.procedure_load_actual,
+    calc.avg_load_actual,
+    calc.burnout_growth,
     'Month calculated'
   ];
 
@@ -826,18 +960,31 @@ function appendRoundResult_(sheet, calc, cfg) {
   formatSimpleSheet_(sheet, getRoundResultsHeaders_().length);
 }
 
-function appendTeamState_(sheet, calc, cfg) {
+function appendTeamState_(sheet, calc, runtimeTeamIdentity) {
   ensureTeamStateHeaders_(sheet);
-  const latestState = getLatestTeamState_(sheet, cfg.teamId);
+  const latestState = getLatestTeamState_(sheet, runtimeTeamIdentity.team_id);
 
   const row = [
-    calc.round_no, cfg.teamId, cfg.teamName,
-    calc.reputation_next, calc.service_next, calc.quality_next, calc.burnout_next, calc.loyalty_next,
-    calc.patient_base_next, calc.market_share, calc.cash_balance_next,
+    calc.round_no,
+    runtimeTeamIdentity.team_id,
+    runtimeTeamIdentity.team_name,
+    calc.reputation_next,
+    calc.service_next,
+    calc.quality_next,
+    calc.burnout_next,
+    calc.loyalty_next,
+    calc.patient_base_next,
+    calc.market_share,
+    calc.market_pressure_units_end,
+    calc.cash_balance_next,
     calc.doctors_next,
-    Number(latestState.visit_rooms), Number(latestState.ftl_rooms),
-    Number(latestState.max_visit_doctors), Number(latestState.max_ftl_doctors), Number(latestState.total_doctor_slots),
-    calc.max_doctor_load_percent, calc.load_factor,
+    Number(latestState.visit_rooms),
+    Number(latestState.ftl_rooms),
+    Number(latestState.max_visit_doctors),
+    Number(latestState.max_ftl_doctors),
+    Number(latestState.total_doctor_slots),
+    calc.max_doctor_load_percent,
+    calc.load_factor,
     'State after month calculation'
   ];
 
@@ -861,27 +1008,79 @@ function ensureTeamStateHeaders_(sheet) {
 
 function getRoundResultsHeaders_() {
   return [
-    'round_no', 'team_id', 'team_name',
-    'visit_rooms', 'ftl_rooms', 'doctors_current', 'doctors_visit_assigned', 'doctors_ftl_assigned',
-    'max_doctor_load_percent', 'load_factor',
-    'effective_cpl', 'ad_leads', 'organic_leads', 'repeat_rate', 'repeat_leads',
-    'new_leads_raw', 'new_leads', 'total_leads', 'market_share',
-    'visit_price', 'procedure_price',
-    'booking_rate', 'bookings', 'visits_done', 'treatment_conversion', 'treatment_patients', 'procedures_done',
-    'visit_revenue', 'procedure_revenue', 'total_revenue',
-    'rent_month', 'doctor_cost', 'total_cost', 'financial_result', 'cash_balance_next',
-    'visit_load_actual', 'procedure_load_actual', 'avg_load_actual', 'burnout_growth',
+    'round_no',
+    'team_id',
+    'team_name',
+    'visit_rooms',
+    'ftl_rooms',
+    'doctors_current',
+    'doctors_visit_assigned',
+    'doctors_ftl_assigned',
+    'max_doctor_load_percent',
+    'load_factor',
+    'market_pressure_units_start',
+    'pressure_share_start',
+    'effective_cpl',
+    'ad_leads',
+    'organic_leads',
+    'repeat_rate',
+    'repeat_leads',
+    'new_leads_raw',
+    'new_leads',
+    'total_leads',
+    'market_share',
+    'market_pressure_units_end',
+    'pressure_share_end',
+    'visit_price',
+    'procedure_price',
+    'booking_rate',
+    'bookings',
+    'visits_done',
+    'new_visits_done',
+    'repeat_visits_done',
+    'treatment_conversion',
+    'treatment_patients',
+    'new_treatment_patients',
+    'repeat_treatment_patients',
+    'procedures_done',
+    'visit_revenue',
+    'procedure_revenue',
+    'total_revenue',
+    'rent_month',
+    'doctor_cost',
+    'total_cost',
+    'financial_result',
+    'cash_balance_next',
+    'visit_load_actual',
+    'procedure_load_actual',
+    'avg_load_actual',
+    'burnout_growth',
     'comment'
   ];
 }
 
 function getTeamStateHeaders_() {
   return [
-    'round_no', 'team_id', 'team_name',
-    'reputation', 'service', 'quality', 'burnout', 'loyalty',
-    'patient_base', 'market_share', 'cash_balance',
-    'doctors_current', 'visit_rooms', 'ftl_rooms', 'max_visit_doctors', 'max_ftl_doctors', 'total_doctor_slots',
-    'max_doctor_load_percent', 'load_factor',
+    'round_no',
+    'team_id',
+    'team_name',
+    'reputation',
+    'service',
+    'quality',
+    'burnout',
+    'loyalty',
+    'patient_base',
+    'market_share',
+    'market_pressure_units',
+    'cash_balance',
+    'doctors_current',
+    'visit_rooms',
+    'ftl_rooms',
+    'max_visit_doctors',
+    'max_ftl_doctors',
+    'total_doctor_slots',
+    'max_doctor_load_percent',
+    'load_factor',
     'notes'
   ];
 }
@@ -918,6 +1117,14 @@ function readTechParamsMap_(sheet) {
   return map;
 }
 
+function getRuntimeTeamIdentity_(sessionConfigSheet, cfg) {
+  const sessionConfig = readSessionConfigMap_(sessionConfigSheet);
+  return {
+    team_id: String(sessionConfig.team_id || cfg.teamId),
+    team_name: String(sessionConfig.team_name || cfg.teamName)
+  };
+}
+
 function getLatestTeamState_(sheet, teamId) {
   const values = sheet.getDataRange().getValues();
   if (values.length < 2) throw new Error('TEAM_STATE пуст. Сначала нужно инициализировать сессию.');
@@ -938,6 +1145,34 @@ function getLatestTeamState_(sheet, teamId) {
   }
 
   if (!latestRow) throw new Error(`Не найдено состояние команды ${teamId} в TEAM_STATE.`);
+
+  const obj = {};
+  Object.keys(headerMap).forEach(key => {
+    obj[key] = latestRow[headerMap[key]];
+  });
+  return obj;
+}
+
+function getLatestRoundResult_(sheet, teamId) {
+  const values = sheet.getDataRange().getValues();
+  if (values.length < 2) return null;
+
+  const headerMap = buildHeaderMap_(values[0]);
+  let latestRow = null;
+  let latestRound = -Infinity;
+
+  for (let r = 1; r < values.length; r++) {
+    const row = values[r];
+    const rowTeamId = String(row[headerMap.team_id] || '').trim();
+    const roundNo = Number(row[headerMap.round_no]);
+    if (rowTeamId !== String(teamId)) continue;
+    if (roundNo > latestRound) {
+      latestRound = roundNo;
+      latestRow = row;
+    }
+  }
+
+  if (!latestRow) return null;
 
   const obj = {};
   Object.keys(headerMap).forEach(key => {
@@ -969,6 +1204,9 @@ function ensureTechParametersDefaults_(sheet) {
 
     ['MODEL', 'alpha', 1.2, 'CPL alpha'],
     ['MODEL', 'beta', 2, 'CPL beta'],
+    ['MODEL', 'market_pressure_retention', 0.8, 'Удержание market pressure'],
+    ['MODEL', 'market_pressure_units_start', 0, 'Стартовые units market pressure'],
+    ['MODEL', 'k_ads_to_market_pressure', 1, 'Лиды рекламы -> market pressure'],
     ['MODEL', 'k_economy_to_demand', 1.2, 'Влияние экономики'],
     ['MODEL', 'k_competition_to_demand', -1.0, 'Влияние конкуренции'],
     ['MODEL', 'k_reputation_to_organic', 0.8, 'Репутация→органика'],
@@ -979,7 +1217,6 @@ function ensureTechParametersDefaults_(sheet) {
     ['BOOKING', 'booking_rate_max', 0.95, 'Макс запись'],
     ['BOOKING', 'k_visit_price_to_booking', -0.2, 'Цена приема→запись'],
     ['BOOKING', 'k_reputation_to_booking', 0.003, 'Репутация→запись'],
-    ['BOOKING', 'k_service_to_booking', 0.002, 'Сервис→запись'],
     ['BOOKING', 'k_building_to_booking', 0.0015, 'Здание→запись'],
     ['BOOKING', 'k_parking_to_booking', 0.001, 'Парковка→запись'],
 
@@ -988,14 +1225,11 @@ function ensureTechParametersDefaults_(sheet) {
     ['CONV', 'treatment_conversion_max', 0.95, 'Макс конверсия'],
     ['CONV', 'k_procedure_price_to_conversion', -0.15, 'Цена процедуры→конверсия'],
     ['CONV', 'k_reputation_to_conversion', 0.003, 'Репутация→конверсия'],
-    ['CONV', 'k_service_to_conversion', 0.003, 'Сервис→конверсия'],
-    ['CONV', 'k_quality_to_conversion', 0.004, 'Качество→конверсия'],
-    ['CONV', 'k_burnout_to_conversion', -0.002, 'Выгорание→конверсия'],
 
     ['REPEAT', 'base_repeat_rate', 0.1, 'Базовый repeat'],
     ['REPEAT', 'repeat_rate_min', 0, 'Мин repeat'],
     ['REPEAT', 'repeat_rate_max', 0.5, 'Макс repeat'],
-    ['REPEAT', 'k_reputation_to_repeat', 0.01, 'ΔРепутации→repeat'],
+    ['REPEAT', 'k_reputation_to_repeat', 0.01, 'Репутация→repeat'],
 
     ['STATE_DYN', 'training_service_effect_coef', 0.00001, 'Обучение→сервис'],
     ['STATE_DYN', 'training_quality_effect_coef', 0.00002, 'Обучение→качество'],
@@ -1009,6 +1243,7 @@ function ensureTechParametersDefaults_(sheet) {
     ['STATE_DYN', 'aggressive_sales_reputation_penalty', 0.08, 'Агресс. продажи штраф'],
     ['STATE_DYN', 'stability_bonus', 0, 'Автономный бонус стабильности лояльности'],
     ['STATE_DYN', 'fire_loyalty_penalty', 10, 'Увольнения штраф лояльности'],
+    ['STATE_DYN', 'loyalty_growth_cap', 10, 'Ограничение роста лояльности за ход'],
     ['STATE_DYN', 'staff_comfort_burnout_relief_coef', 0.03, 'Комфорт персонала снижает выгорание'],
     ['STATE_DYN', 'kitchen_burnout_relief_coef', 0.02, 'Кухня снижает выгорание'],
     ['STATE_DYN', 'burnout_growth_medium', 1, 'Рост выгорания при средней нагрузке'],
@@ -1070,7 +1305,7 @@ function getNumberOrDefault_(obj, key, fallback) {
 }
 
 function clamp_(value, minVal, maxVal) {
-  return Math.max(minVal, Math.min(maxVal, value));
+  return Math.min(Math.max(value, minVal), maxVal);
 }
 
 function safeDiv_(a, b) {
