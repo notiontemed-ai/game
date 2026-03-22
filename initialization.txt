@@ -43,9 +43,7 @@ const REQUIRED_COEFFICIENT_CODES = [
   'repeat_rate_max',
   'k_reputation_to_repeat',
   'k_loyalty_to_quality',
-  'k_loyalty_to_service',
   'quality_reputation_bonus_coef',
-  'service_reputation_bonus_coef',
   'k_reputation_to_organic',
   'k_location_to_organic',
   'base_booking_rate',
@@ -470,7 +468,6 @@ function buildTechMasterRegistryRows_(ss) {
     ['MODEL','base_repeat_rate', pickRequiredCoeff('base_repeat_rate'), 'Required from 08_Coefficients'],
 
     ['STATE_START','reputation_start', pickHidden(['reputation_start','reputation'], 50), 'Imported from 05_HiddenState / Стартовые значения'],
-    ['STATE_START','service_start', pickHidden(['service_start','service'], 50), 'Imported from 05_HiddenState / Стартовые значения'],
     ['STATE_START','quality_start', pickHidden(['quality_start','quality'], 50), 'Imported from 05_HiddenState / Стартовые значения'],
     ['STATE_START','burnout_start', pickHidden(['burnout_start','burnout'], 20), 'Imported from 05_HiddenState / Стартовые значения'],
     ['STATE_START','loyalty_start', pickHidden(['loyalty_start','loyalty'], 50), 'Imported from 05_HiddenState / Стартовые значения'],
@@ -480,12 +477,12 @@ function buildTechMasterRegistryRows_(ss) {
 
 
   const requestedCoeffKeys = [
-    'k_reputation_to_repeat','training_service_effect_coef','training_quality_effect_coef','training_effect_cap',
-    'burnout_service_penalty_coef','burnout_quality_penalty_coef','staff_comfort_burnout_relief_coef','kitchen_burnout_relief_coef',
-    'quality_reputation_bonus_coef','service_reputation_bonus_coef','aggressive_sales_reputation_penalty',
+    'k_reputation_to_repeat','training_quality_effect_coef','training_effect_cap',
+    'burnout_quality_penalty_coef','staff_comfort_burnout_relief_coef','kitchen_burnout_relief_coef',
+    'quality_reputation_bonus_coef','aggressive_sales_reputation_penalty',
     'quality_loyalty_bonus_coef','service_loyalty_bonus_coef','reputation_loyalty_bonus_coef','stability_bonus','fire_loyalty_penalty',
     'market_pressure_retention','market_pressure_units_start','k_ads_to_market_pressure',
-    'k_loyalty_to_quality','k_loyalty_to_service','k_reputation_to_organic','k_location_to_organic',
+    'k_loyalty_to_quality','k_reputation_to_organic','k_location_to_organic',
     'k_economy_to_market_price','k_competition_to_market_price','market_price_index_min',
     'market_price_index_max','k_price_deviation_to_conversion'
   ];

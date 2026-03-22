@@ -36,9 +36,7 @@ const REQUIRED_TECH_PARAMETER_CODES = [
   'repeat_rate_max',
   'k_reputation_to_repeat',
   'k_loyalty_to_quality',
-  'k_loyalty_to_service',
   'quality_reputation_bonus_coef',
-  'service_reputation_bonus_coef',
   'k_reputation_to_organic',
   'k_location_to_organic',
   'base_booking_rate',
@@ -445,7 +443,6 @@ function writeTeamStateSheet_(sheet, setup, derived, tech, runtimeTeamIdentity) 
     runtimeTeamIdentity.team_id,
     runtimeTeamIdentity.team_name,
     getNumberOrDefault_(tech, 'reputation_start', 50),
-    getNumberOrDefault_(tech, 'service_start', 50),
     getNumberOrDefault_(tech, 'quality_start', 50),
     getNumberOrDefault_(tech, 'burnout_start', 20),
     getNumberOrDefault_(tech, 'loyalty_start', 50),
@@ -645,7 +642,6 @@ function calculateMonthRound_(ctx) {
   const roundNo = Number(inp.round_no);
 
   const reputation = Number(prev.reputation);
-  const service = Number(prev.service);
   const quality = Number(prev.quality);
   const burnout = Number(prev.burnout);
   const loyalty = Number(prev.loyalty);
@@ -709,15 +705,11 @@ function calculateMonthRound_(ctx) {
   const kReputationToRepeat = getRequiredNumber_(tech, 'k_reputation_to_repeat', 'TECH_PARAMETERS');
   const repeatRateMax = getRequiredNumber_(tech, 'repeat_rate_max', 'TECH_PARAMETERS');
 
-  const trainingServiceEffectCoef = getNumberOrDefault_(tech, 'training_service_effect_coef', 0.00001);
   const trainingQualityEffectCoef = getNumberOrDefault_(tech, 'training_quality_effect_coef', 0.00002);
   const trainingEffectCap = getNumberOrDefault_(tech, 'training_effect_cap', 5);
-  const burnoutServicePenaltyCoef = getNumberOrDefault_(tech, 'burnout_service_penalty_coef', 0.10);
   const burnoutQualityPenaltyCoef = getNumberOrDefault_(tech, 'burnout_quality_penalty_coef', 0.15);
-  const kLoyaltyToService = getRequiredNumber_(tech, 'k_loyalty_to_service', 'TECH_PARAMETERS');
   const kLoyaltyToQuality = getRequiredNumber_(tech, 'k_loyalty_to_quality', 'TECH_PARAMETERS');
   const qualityReputationBonusCoef = getRequiredNumber_(tech, 'quality_reputation_bonus_coef', 'TECH_PARAMETERS');
-  const serviceReputationBonusCoef = getRequiredNumber_(tech, 'service_reputation_bonus_coef', 'TECH_PARAMETERS');
   const aggressiveSalesReputationPenalty = getNumberOrDefault_(tech, 'aggressive_sales_reputation_penalty', 0.08);
   const stabilityBonus = getRequiredNumber_(tech, 'stability_bonus', 'TECH_PARAMETERS');
   const fireLoyaltyPenalty = getRequiredNumber_(tech, 'fire_loyalty_penalty', 'TECH_PARAMETERS');
@@ -829,29 +821,22 @@ function calculateMonthRound_(ctx) {
   else if (avgLoadActual < 0.9) burnoutGrowth = burnoutGrowthMedium;
   else burnoutGrowth = burnoutGrowthHigh;
 
-  const trainingServiceEffect = Math.min(trainingBudget * trainingServiceEffectCoef, trainingEffectCap);
-  const trainingQualityEffect = Math.min(trainingBudget * trainingQualityEffectCoef, trainingEffectCap);
+  const trainingEffect = Math.min(trainingBudget * trainingQualityEffectCoef, trainingEffectCap);
 
   const comfortBonus = staffComfort / 20;
   const loyaltyRaw = loyalty + stabilityBonus + comfortBonus - fireCount * fireLoyaltyPenalty;
   const loyaltyMaxStep = loyalty + Math.max(0, loyaltyGrowthCap);
   const loyaltyNext = clamp_(Math.min(loyaltyRaw, loyaltyMaxStep), stateMin, stateMax);
 
-  const serviceNext = clamp_(
-    service + loyalty * kLoyaltyToService + trainingServiceEffect - burnout * burnoutServicePenaltyCoef,
-    stateMin,
-    stateMax
-  );
-
   const qualityNext = clamp_(
-    quality + loyalty * kLoyaltyToQuality + trainingQualityEffect - burnout * burnoutQualityPenaltyCoef,
+    quality + loyalty * kLoyaltyToQuality + trainingEffect - burnout * burnoutQualityPenaltyCoef,
     stateMin,
     stateMax
   );
 
   const pressurePenalty = pressureIndex * aggressiveSalesReputationPenalty;
   const reputationNext = clamp_(
-    reputation + qualityNext * qualityReputationBonusCoef + serviceNext * serviceReputationBonusCoef - pressurePenalty,
+    reputation + qualityNext * qualityReputationBonusCoef - pressurePenalty,
     stateMin,
     stateMax
   );
@@ -928,7 +913,6 @@ function calculateMonthRound_(ctx) {
     financial_result: financialResult,
     cash_balance_next: cashBalanceNext,
 
-    service_next: serviceNext,
     quality_next: qualityNext,
     reputation_next: reputationNext,
     burnout_next: burnoutNext,
@@ -1024,7 +1008,6 @@ function appendTeamState_(sheet, calc, runtimeTeamIdentity) {
     runtimeTeamIdentity.team_id,
     runtimeTeamIdentity.team_name,
     calc.reputation_next,
-    calc.service_next,
     calc.quality_next,
     calc.burnout_next,
     calc.loyalty_next,
@@ -1127,7 +1110,6 @@ function getTeamStateHeaders_() {
     'team_id',
     'team_name',
     'reputation',
-    'service',
     'quality',
     'burnout',
     'loyalty',
@@ -1342,15 +1324,11 @@ function ensureTechParametersDefaults_(sheet) {
     ['REPEAT', 'repeat_rate_max', 0.5, 'Макс repeat'],
     ['REPEAT', 'k_reputation_to_repeat', 0.01, 'Репутация→repeat'],
 
-    ['STATE_DYN', 'training_service_effect_coef', 0.00001, 'Обучение→сервис'],
     ['STATE_DYN', 'training_quality_effect_coef', 0.00002, 'Обучение→качество'],
     ['STATE_DYN', 'training_effect_cap', 5, 'Кэп эффекта обучения'],
-    ['STATE_DYN', 'k_loyalty_to_service', 0.03, 'Лояльность→сервис'],
     ['STATE_DYN', 'k_loyalty_to_quality', 0.03, 'Лояльность→качество'],
-    ['STATE_DYN', 'burnout_service_penalty_coef', 0.10, 'Выгорание штраф сервис'],
     ['STATE_DYN', 'burnout_quality_penalty_coef', 0.15, 'Выгорание штраф качество'],
     ['STATE_DYN', 'quality_reputation_bonus_coef', 0.05, 'Качество→репутация'],
-    ['STATE_DYN', 'service_reputation_bonus_coef', 0.05, 'Сервис→репутация'],
     ['STATE_DYN', 'aggressive_sales_reputation_penalty', 0.08, 'Агресс. продажи штраф'],
     ['STATE_DYN', 'stability_bonus', 0, 'Автономный бонус стабильности лояльности'],
     ['STATE_DYN', 'fire_loyalty_penalty', 10, 'Увольнения штраф лояльности'],
