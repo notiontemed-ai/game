@@ -103,8 +103,8 @@ function createNewGameSessionFromCatalog() {
 
   cleanupDefaultSheetInNewSession_(newSs, cfg);
 
-  // Заполняем только в новой книге (аналог fillStartSetupFromModel, но без привязки к active ss).
-  fillStartSetupFromModelInSpreadsheet_(newSs);
+  // Заполняем новую книгу значениями модели из каталога.
+  fillStartSetupFromModelInSpreadsheet_(newSs, catalogSs);
 
   showSessionCreatedDialog_(newSs.getUrl());
 }
@@ -157,8 +157,8 @@ function moveSpreadsheetToTargetFolder_(ss, folderId) {
   file.moveTo(targetFolder);
 }
 
-function fillStartSetupFromModelInSpreadsheet_(ss) {
-  syncStartSetupWithLotCatalogInSpreadsheet_(ss);
+function fillStartSetupFromModelInSpreadsheet_(ss, sourceSs) {
+  syncStartSetupWithLotCatalogInSpreadsheet_(ss, sourceSs);
 }
 
 function bootstrapRequiredSheetsInNewSession_(sourceSs, targetSs, cfg) {
@@ -226,7 +226,7 @@ function isDefaultSheetName_(name) {
  */
 function syncStartSetupWithLotCatalog() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  syncStartSetupWithLotCatalogInSpreadsheet_(ss);
+  syncStartSetupWithLotCatalogInSpreadsheet_(ss, ss);
   SpreadsheetApp.getUi().alert('START_SETUP синхронизирован с 12_LotList по selected_lot_id.');
 }
 
@@ -235,12 +235,12 @@ function fillStartSetupFromModel() {
   syncStartSetupWithLotCatalog();
 }
 
-function syncStartSetupWithLotCatalogInSpreadsheet_(ss) {
+function syncStartSetupWithLotCatalogInSpreadsheet_(ss, sourceSs) {
   const cfg = INITIALIZATION_CONFIG;
   const startSheet = getOrCreateSheetForInit_(ss, cfg.startSheetName);
   ensureStartSetupTemplateForInit_(startSheet, cfg.sourceMarkerText);
   applyLotBindingsInStartSetup_(ss);
-  syncEnvironmentValuesToStartSetup_(ss);
+  syncEnvironmentValuesToStartSetup_(ss, sourceSs || ss);
 }
 
 /**
@@ -528,10 +528,10 @@ function ensureStartSetupRowsPresent_(sheet, rowsToEnsure) {
   sheet.getRange(sheet.getLastRow() + 1, 1, missingRows.length, headers.length).setValues(missingRows);
 }
 
-function syncEnvironmentValuesToStartSetup_(ss) {
+function syncEnvironmentValuesToStartSetup_(ss, sourceSs) {
   const cfg = INITIALIZATION_CONFIG;
   const startSheet = mustGetSheetForInit_(ss, cfg.startSheetName);
-  const environmentMap = buildEnvironmentMap_(ss);
+  const environmentMap = buildEnvironmentMap_(sourceSs || ss);
   validateRequiredEnvironmentValues_(environmentMap);
 
   const values = startSheet.getDataRange().getValues();
