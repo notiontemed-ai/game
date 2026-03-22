@@ -19,6 +19,46 @@ const GAME_CONFIG = {
   teamName: 'Main Team'
 };
 
+const REQUIRED_START_SETUP_ENV_FIELDS = [
+  'env_economy',
+  'env_competition',
+  'env_total_market',
+  'env_base_organic',
+  'market_avg_visit_price_base',
+  'market_avg_procedure_price_base'
+];
+
+const REQUIRED_TECH_PARAMETER_CODES = [
+  'alpha',
+  'beta',
+  'base_cpl',
+  'base_repeat_rate',
+  'repeat_rate_max',
+  'k_reputation_to_repeat',
+  'k_loyalty_to_quality',
+  'k_loyalty_to_service',
+  'quality_reputation_bonus_coef',
+  'service_reputation_bonus_coef',
+  'k_reputation_to_organic',
+  'k_location_to_organic',
+  'base_booking_rate',
+  'base_treatment_conversion',
+  'fire_loyalty_penalty',
+  'base_rent_month',
+  'doctor_salary_month',
+  'base_admin_cost',
+  'start_cash_balance',
+  'stability_bonus',
+  'market_pressure_retention',
+  'market_pressure_units_start',
+  'k_ads_to_market_pressure',
+  'k_economy_to_market_price',
+  'k_competition_to_market_price',
+  'market_price_index_min',
+  'market_price_index_max',
+  'k_price_deviation_to_conversion'
+];
+
 
 function onOpen() {
   SpreadsheetApp.getUi()
@@ -87,6 +127,7 @@ function initializeSessionFromStartSetup() {
 
   ensureTechParametersDefaults_(techSheet);
   const techParams = readTechParamsMap_(techSheet);
+  validateRequiredTechParameters_(techParams);
   const derived = deriveInitialSessionValues_(startSetup, techParams);
 
   if (techParams.start_cash_balance === '' || techParams.start_cash_balance === null || techParams.start_cash_balance === undefined || isNaN(Number(techParams.start_cash_balance))) {
@@ -140,15 +181,15 @@ function prepareRoundInputForNextMonth() {
     return;
   }
 
-  const initialVisitPrice = Number(sessionConfig.initial_visit_price || 0);
-  const initialProcedurePrice = Number(sessionConfig.initial_procedure_price || 0);
+  validateRequiredTechParameters_(techParams);
+  const initialMarketContext = computeMarketContext_(sessionConfig, techParams);
 
   const defaultVisitPrice = latestRoundResult && Number(latestRoundResult.round_no) >= 1
     ? Number(latestRoundResult.visit_price || 0)
-    : initialVisitPrice;
+    : initialMarketContext.market_avg_visit_price;
   const defaultProcedurePrice = latestRoundResult && Number(latestRoundResult.round_no) >= 1
     ? Number(latestRoundResult.procedure_price || 0)
-    : initialProcedurePrice;
+    : initialMarketContext.market_avg_procedure_price;
   const maxLoadDefault = latestRoundResult && Number(latestRoundResult.round_no) >= 1
     ? Number(latestRoundResult.max_doctor_load_percent || 0)
     : getNumberOrDefault_(latestState, 'max_doctor_load_percent', 100);
@@ -214,6 +255,7 @@ function runNextMonthRound() {
   const runtimeTeamIdentity = getRuntimeTeamIdentity_(sessionConfigSheet, cfg);
   const sessionConfig = readSessionConfigMap_(sessionConfigSheet);
   const techParams = readTechParamsMap_(techSheet);
+  validateRequiredTechParameters_(techParams);
   const latestState = getLatestTeamState_(teamStateSheet, runtimeTeamIdentity.team_id);
 
   const nextRoundNo = Number(latestState.round_no) + 1;
@@ -280,6 +322,7 @@ function validateStartSetup_(setup) {
     'ftl_rooms',
     'doctors_start'
   ];
+  Array.prototype.push.apply(requiredFields, REQUIRED_START_SETUP_ENV_FIELDS);
 
   const missing = requiredFields.filter(f => {
     const v = setup[f];
@@ -292,6 +335,7 @@ function validateStartSetup_(setup) {
     'selected_parking_score', 'selected_staff_comfort', 'selected_reception_score', 'selected_kitchen_score',
     'visit_rooms', 'ftl_rooms', 'doctors_start'
   ];
+  Array.prototype.push.apply(numericFields, REQUIRED_START_SETUP_ENV_FIELDS);
 
   const badNumbers = numericFields.filter(f => isNaN(Number(setup[f])));
   if (badNumbers.length) throw new Error('Следующие поля должны быть числовыми:\n' + badNumbers.join(', '));
@@ -310,6 +354,11 @@ function validateStartSetup_(setup) {
     throw new Error(`Стартовое число врачей (${doctorsStart}) не может превышать число слотов (${maxDoctorSlots}).`);
   }
   if (doctorsStart < 0) throw new Error('Стартовое число врачей не может быть отрицательным.');
+
+  if (Number(setup.market_avg_visit_price_base) <= 0) throw new Error('market_avg_visit_price_base должен быть > 0.');
+  if (Number(setup.market_avg_procedure_price_base) <= 0) throw new Error('market_avg_procedure_price_base должен быть > 0.');
+  if (Number(setup.env_total_market) < 0) throw new Error('env_total_market должен быть >= 0.');
+  if (Number(setup.env_base_organic) < 0) throw new Error('env_base_organic должен быть >= 0.');
 }
 
 function deriveInitialSessionValues_(setup, tech) {
@@ -360,13 +409,15 @@ function writeSessionConfigSheet_(sheet, setup, derived, tech, cfg) {
     ['ROOM_SETUP', 'max_ftl_doctors', derived.max_ftl_doctors, 'Максимум врачей на ФТЛ'],
     ['ROOM_SETUP', 'total_doctor_slots', derived.total_doctor_slots, 'Слоты по всем кабинетам'],
 
-    ['INITIAL_PRICING', 'initial_visit_price', getNumberOrDefault_(tech, 'base_visit_price', getNumberOrDefault_(tech, 'initial_visit_price', 3000)), 'Стартовая цена приема'],
-    ['INITIAL_PRICING', 'initial_procedure_price', getNumberOrDefault_(tech, 'base_procedure_price', getNumberOrDefault_(tech, 'initial_procedure_price', 500)), 'Стартовая цена процедуры'],
+    ['INITIAL_PRICING', 'initial_visit_price', '', 'Legacy field, not used in current calculations'],
+    ['INITIAL_PRICING', 'initial_procedure_price', '', 'Legacy field, not used in current calculations'],
 
-    ['ENVIRONMENT', 'env_economy', getNumberOrDefault_(tech, 'env_economy', 50), 'Стартовая экономика'],
-    ['ENVIRONMENT', 'env_competition', getNumberOrDefault_(tech, 'env_competition', 50), 'Стартовая конкуренция'],
-    ['ENVIRONMENT', 'env_total_market', getNumberOrDefault_(tech, 'env_total_market', 1000), 'Рынок новых обращений'],
-    ['ENVIRONMENT', 'env_base_organic', getNumberOrDefault_(tech, 'env_base_organic', 100), 'Базовая органика'],
+    ['ENVIRONMENT', 'env_economy', getRequiredNumber_(setup, 'env_economy', 'START_SETUP'), 'Стартовая экономика'],
+    ['ENVIRONMENT', 'env_competition', getRequiredNumber_(setup, 'env_competition', 'START_SETUP'), 'Стартовая конкуренция'],
+    ['ENVIRONMENT', 'env_total_market', getRequiredNumber_(setup, 'env_total_market', 'START_SETUP'), 'Рынок новых обращений'],
+    ['ENVIRONMENT', 'env_base_organic', getRequiredNumber_(setup, 'env_base_organic', 'START_SETUP'), 'Базовая органика'],
+    ['ENVIRONMENT', 'market_avg_visit_price_base', getRequiredNumber_(setup, 'market_avg_visit_price_base', 'START_SETUP'), 'Базовая среднерыночная цена приема'],
+    ['ENVIRONMENT', 'market_avg_procedure_price_base', getRequiredNumber_(setup, 'market_avg_procedure_price_base', 'START_SETUP'), 'Базовая среднерыночная цена процедуры'],
 
     ['LOAD_POLICY', 'max_doctor_load_percent', derived.max_doctor_load_percent, 'Макс. загрузка'],
     ['LOAD_POLICY', 'load_factor', derived.load_factor, 'Коэффициент мощности'],
@@ -377,10 +428,10 @@ function writeSessionConfigSheet_(sheet, setup, derived, tech, cfg) {
     ['TECH', 'procedures_per_course', derived.procedures_per_course, 'Процедур в курсе'],
 
     ['FINANCE', 'start_cash_balance', Number(tech.start_cash_balance), 'Стартовый капитал'],
-    ['FINANCE', 'base_cpl', getNumberOrDefault_(tech, 'base_cpl', 1000), 'Базовый CPL'],
-    ['FINANCE', 'base_rent_month', getNumberOrDefault_(tech, 'base_rent_month', 500000), 'Базовая аренда в месяц'],
-    ['FINANCE', 'doctor_salary_month', getNumberOrDefault_(tech, 'doctor_salary_month', 250000), 'Зарплата врача в месяц'],
-    ['FINANCE', 'base_admin_cost', getNumberOrDefault_(tech, 'base_admin_cost', 150000), 'Базовые административные расходы']
+    ['FINANCE', 'base_cpl', getRequiredNumber_(tech, 'base_cpl', 'TECH_PARAMETERS'), 'Базовый CPL'],
+    ['FINANCE', 'base_rent_month', getRequiredNumber_(tech, 'base_rent_month', 'TECH_PARAMETERS'), 'Базовая аренда в месяц'],
+    ['FINANCE', 'doctor_salary_month', getRequiredNumber_(tech, 'doctor_salary_month', 'TECH_PARAMETERS'), 'Зарплата врача в месяц'],
+    ['FINANCE', 'base_admin_cost', getRequiredNumber_(tech, 'base_admin_cost', 'TECH_PARAMETERS'), 'Базовые административные расходы']
   ];
 
   writeMatrixToSheet_(sheet, 1, 1, rows, 4);
@@ -420,14 +471,16 @@ function writeTeamStateSheet_(sheet, setup, derived, tech, runtimeTeamIdentity) 
 
 function writeRoundResultsBaseline_(sheet, setup, derived, tech, sessionConfig, runtimeTeamIdentity) {
   const headers = getRoundResultsHeaders_();
-  const envTotalMarket = getNumberOrDefault_(tech, 'env_total_market', Number(sessionConfig.env_total_market || 1000));
-  const marketPressureUnitsStart = getNumberOrDefault_(tech, 'market_pressure_units_start', 0);
+  validateRequiredTechParameters_(tech);
+  const envTotalMarket = getRequiredNumber_(sessionConfig, 'env_total_market', 'SESSION_CONFIG');
+  const marketPressureUnitsStart = getRequiredNumber_(tech, 'market_pressure_units_start', 'TECH_PARAMETERS');
   const pressureShareStart = envTotalMarket > 0 ? clamp_(marketPressureUnitsStart / envTotalMarket, 0, 1) : 0;
-  const baseCpl = getNumberOrDefault_(tech, 'base_cpl', Number(sessionConfig.base_cpl || 1000));
-  const alpha = getNumberOrDefault_(tech, 'alpha', 1.2);
-  const beta = getNumberOrDefault_(tech, 'beta', 2);
+  const baseCpl = getRequiredNumber_(tech, 'base_cpl', 'TECH_PARAMETERS');
+  const alpha = getRequiredNumber_(tech, 'alpha', 'TECH_PARAMETERS');
+  const beta = getRequiredNumber_(tech, 'beta', 'TECH_PARAMETERS');
   const effectiveCpl = baseCpl * (1 + alpha * Math.pow(pressureShareStart, beta));
   const marketShareStart = getNumberOrDefault_(tech, 'market_share_start', 0.05);
+  const marketContext = computeMarketContext_(sessionConfig, tech);
 
   const row = [
     0,
@@ -453,8 +506,15 @@ function writeRoundResultsBaseline_(sheet, setup, derived, tech, sessionConfig, 
     marketShareStart,
     marketPressureUnitsStart,
     pressureShareStart,
-    getNumberOrDefault_(tech, 'base_visit_price', getNumberOrDefault_(tech, 'initial_visit_price', 3000)),
-    getNumberOrDefault_(tech, 'base_procedure_price', getNumberOrDefault_(tech, 'initial_procedure_price', 500)),
+    getRequiredNumber_(sessionConfig, 'env_economy', 'SESSION_CONFIG'),
+    getRequiredNumber_(sessionConfig, 'env_competition', 'SESSION_CONFIG'),
+    marketContext.market_price_index,
+    marketContext.market_avg_visit_price,
+    marketContext.market_avg_procedure_price,
+    marketContext.market_avg_visit_price,
+    marketContext.market_avg_procedure_price,
+    1,
+    1,
     0,
     0,
     0,
@@ -598,14 +658,13 @@ function calculateMonthRound_(ctx) {
   const ftlRooms = Number(prev.ftl_rooms);
   const totalDoctorSlots = Number(prev.total_doctor_slots);
 
-  const envEconomy = getNumberOrDefault_(tech, 'env_economy', Number(sessionConfig.env_economy || 50));
-  const envCompetition = getNumberOrDefault_(tech, 'env_competition', Number(sessionConfig.env_competition || 50));
-  const envTotalMarket = getNumberOrDefault_(tech, 'env_total_market', Number(sessionConfig.env_total_market || 1000));
-  const envBaseOrganic = getNumberOrDefault_(tech, 'env_base_organic', Number(sessionConfig.env_base_organic || 100));
+  const envCompetition = getRequiredNumber_(sessionConfig, 'env_competition', 'SESSION_CONFIG');
+  const envTotalMarket = getRequiredNumber_(sessionConfig, 'env_total_market', 'SESSION_CONFIG');
+  const envBaseOrganic = getRequiredNumber_(sessionConfig, 'env_base_organic', 'SESSION_CONFIG');
+  const envEconomyFromSession = getRequiredNumber_(sessionConfig, 'env_economy', 'SESSION_CONFIG');
+  const marketContext = computeMarketContext_(sessionConfig, tech);
 
   const locationScore = Number(sessionConfig.selected_location_score);
-  const buildingScore = Number(sessionConfig.selected_building_score);
-  const parkingScore = Number(sessionConfig.selected_parking_score);
   const staffComfort = Number(sessionConfig.selected_staff_comfort);
   const kitchenScore = Number(sessionConfig.selected_kitchen_score);
   const rentCoef = Number(sessionConfig.selected_rent_coef);
@@ -620,12 +679,10 @@ function calculateMonthRound_(ctx) {
   const doctorsFtlAssigned = Number(inp.doctors_ftl_assigned);
   const maxDoctorLoadPercent = Number(inp.max_doctor_load_percent);
 
-  const baseVisitPrice = getNumberOrDefault_(sessionConfig, 'initial_visit_price', getNumberOrDefault_(tech, 'initial_visit_price', visitPrice));
-  const baseProcedurePrice = getNumberOrDefault_(sessionConfig, 'initial_procedure_price', getNumberOrDefault_(tech, 'initial_procedure_price', procedurePrice));
-  const baseRentMonth = getNumberOrDefault_(sessionConfig, 'base_rent_month', getNumberOrDefault_(tech, 'base_rent_month', 500000));
-  const doctorSalaryMonth = getNumberOrDefault_(sessionConfig, 'doctor_salary_month', getNumberOrDefault_(tech, 'doctor_salary_month', 250000));
-  const baseAdminCost = getNumberOrDefault_(sessionConfig, 'base_admin_cost', getNumberOrDefault_(tech, 'base_admin_cost', 150000));
-  const baseCpl = getNumberOrDefault_(sessionConfig, 'base_cpl', getNumberOrDefault_(tech, 'base_cpl', 1000));
+  const baseRentMonth = getRequiredNumber_(tech, 'base_rent_month', 'TECH_PARAMETERS');
+  const doctorSalaryMonth = getRequiredNumber_(tech, 'doctor_salary_month', 'TECH_PARAMETERS');
+  const baseAdminCost = getRequiredNumber_(tech, 'base_admin_cost', 'TECH_PARAMETERS');
+  const baseCpl = getRequiredNumber_(tech, 'base_cpl', 'TECH_PARAMETERS');
 
   const workShiftsPerMonth = getNumberOrDefault_(tech, 'work_shifts_per_month', getNumberOrDefault_(sessionConfig, 'work_shifts_per_month', 15));
   const visitsPerShift = getNumberOrDefault_(tech, 'visits_per_shift', getNumberOrDefault_(sessionConfig, 'visits_per_shift', 10));
@@ -635,48 +692,35 @@ function calculateMonthRound_(ctx) {
   const stateMin = getNumberOrDefault_(tech, 'state_min', 0);
   const stateMax = getNumberOrDefault_(tech, 'state_max', 100);
 
-  const alpha = getNumberOrDefault_(tech, 'alpha', 1.2);
-  const beta = getNumberOrDefault_(tech, 'beta', 2);
-  const marketPressureRetention = getNumberOrDefault_(tech, 'market_pressure_retention', 0.8);
-  const adsToMarketPressure = getNumberOrDefault_(tech, 'k_ads_to_market_pressure', 1);
-  const marketPressureUnitsStart = getNumberOrDefault_(tech, 'market_pressure_units_start', 0);
+  const alpha = getRequiredNumber_(tech, 'alpha', 'TECH_PARAMETERS');
+  const beta = getRequiredNumber_(tech, 'beta', 'TECH_PARAMETERS');
+  const marketPressureRetention = getRequiredNumber_(tech, 'market_pressure_retention', 'TECH_PARAMETERS');
+  const adsToMarketPressure = getRequiredNumber_(tech, 'k_ads_to_market_pressure', 'TECH_PARAMETERS');
+  const marketPressureUnitsStart = getRequiredNumber_(tech, 'market_pressure_units_start', 'TECH_PARAMETERS');
 
-  const kEconomyToDemand = getNumberOrDefault_(tech, 'k_economy_to_demand', 1.2);
-  const kCompetitionToDemand = getNumberOrDefault_(tech, 'k_competition_to_demand', -1.0);
-  const kReputationToOrganic = getNumberOrDefault_(tech, 'k_reputation_to_organic', 0.8);
-  const kLocationToOrganic = getNumberOrDefault_(tech, 'k_location_to_organic', 0.5);
+  const kReputationToOrganic = getRequiredNumber_(tech, 'k_reputation_to_organic', 'TECH_PARAMETERS');
+  const kLocationToOrganic = getRequiredNumber_(tech, 'k_location_to_organic', 'TECH_PARAMETERS');
 
-  const baseBookingRate = getNumberOrDefault_(tech, 'base_booking_rate', 0.5);
-  const bookingRateMin = getNumberOrDefault_(tech, 'booking_rate_min', 0.05);
-  const bookingRateMax = getNumberOrDefault_(tech, 'booking_rate_max', 0.95);
-  const kVisitPriceToBooking = getNumberOrDefault_(tech, 'k_visit_price_to_booking', -0.2);
-  const kReputationToBooking = getNumberOrDefault_(tech, 'k_reputation_to_booking', 0.003);
-  const kBuildingToBooking = getNumberOrDefault_(tech, 'k_building_to_booking', 0.0015);
-  const kParkingToBooking = getNumberOrDefault_(tech, 'k_parking_to_booking', 0.001);
+  const baseBookingRate = getRequiredNumber_(tech, 'base_booking_rate', 'TECH_PARAMETERS');
+  const baseTreatmentConversion = getRequiredNumber_(tech, 'base_treatment_conversion', 'TECH_PARAMETERS');
+  const kPriceDeviationToConversion = getRequiredNumber_(tech, 'k_price_deviation_to_conversion', 'TECH_PARAMETERS');
 
-  const baseTreatmentConversion = getNumberOrDefault_(tech, 'base_treatment_conversion', 0.35);
-  const treatmentConversionMin = getNumberOrDefault_(tech, 'treatment_conversion_min', 0.05);
-  const treatmentConversionMax = getNumberOrDefault_(tech, 'treatment_conversion_max', 0.95);
-  const kProcedurePriceToConversion = getNumberOrDefault_(tech, 'k_procedure_price_to_conversion', -0.15);
-  const kReputationToConversion = getNumberOrDefault_(tech, 'k_reputation_to_conversion', 0.003);
-
-  const baseRepeatRate = getNumberOrDefault_(tech, 'base_repeat_rate', 0.1);
-  const kReputationToRepeat = getNumberOrDefault_(tech, 'k_reputation_to_repeat', 0.01);
-  const repeatRateMin = getNumberOrDefault_(tech, 'repeat_rate_min', 0);
-  const repeatRateMax = getNumberOrDefault_(tech, 'repeat_rate_max', 0.5);
+  const baseRepeatRate = getRequiredNumber_(tech, 'base_repeat_rate', 'TECH_PARAMETERS');
+  const kReputationToRepeat = getRequiredNumber_(tech, 'k_reputation_to_repeat', 'TECH_PARAMETERS');
+  const repeatRateMax = getRequiredNumber_(tech, 'repeat_rate_max', 'TECH_PARAMETERS');
 
   const trainingServiceEffectCoef = getNumberOrDefault_(tech, 'training_service_effect_coef', 0.00001);
   const trainingQualityEffectCoef = getNumberOrDefault_(tech, 'training_quality_effect_coef', 0.00002);
   const trainingEffectCap = getNumberOrDefault_(tech, 'training_effect_cap', 5);
   const burnoutServicePenaltyCoef = getNumberOrDefault_(tech, 'burnout_service_penalty_coef', 0.10);
   const burnoutQualityPenaltyCoef = getNumberOrDefault_(tech, 'burnout_quality_penalty_coef', 0.15);
-  const kLoyaltyToService = getNumberOrDefault_(tech, 'k_loyalty_to_service', 0.03);
-  const kLoyaltyToQuality = getNumberOrDefault_(tech, 'k_loyalty_to_quality', 0.03);
-  const qualityReputationBonusCoef = getNumberOrDefault_(tech, 'quality_reputation_bonus_coef', 0.05);
-  const serviceReputationBonusCoef = getNumberOrDefault_(tech, 'service_reputation_bonus_coef', 0.05);
+  const kLoyaltyToService = getRequiredNumber_(tech, 'k_loyalty_to_service', 'TECH_PARAMETERS');
+  const kLoyaltyToQuality = getRequiredNumber_(tech, 'k_loyalty_to_quality', 'TECH_PARAMETERS');
+  const qualityReputationBonusCoef = getRequiredNumber_(tech, 'quality_reputation_bonus_coef', 'TECH_PARAMETERS');
+  const serviceReputationBonusCoef = getRequiredNumber_(tech, 'service_reputation_bonus_coef', 'TECH_PARAMETERS');
   const aggressiveSalesReputationPenalty = getNumberOrDefault_(tech, 'aggressive_sales_reputation_penalty', 0.08);
-  const stabilityBonus = getNumberOrDefault_(tech, 'stability_bonus', 0);
-  const fireLoyaltyPenalty = getNumberOrDefault_(tech, 'fire_loyalty_penalty', 10);
+  const stabilityBonus = getRequiredNumber_(tech, 'stability_bonus', 'TECH_PARAMETERS');
+  const fireLoyaltyPenalty = getRequiredNumber_(tech, 'fire_loyalty_penalty', 'TECH_PARAMETERS');
   const loyaltyGrowthCap = getNumberOrDefault_(tech, 'loyalty_growth_cap', 10);
   const staffComfortBurnoutReliefCoef = getNumberOrDefault_(tech, 'staff_comfort_burnout_relief_coef', 0.03);
   const kitchenBurnoutReliefCoef = getNumberOrDefault_(tech, 'kitchen_burnout_relief_coef', 0.02);
@@ -691,8 +735,8 @@ function calculateMonthRound_(ctx) {
   if (adsToMarketPressure < 0) {
     throw new Error('k_ads_to_market_pressure не может быть отрицательным.');
   }
-  if (repeatRateMin < 0 || repeatRateMax < repeatRateMin) {
-    throw new Error('Некорректные границы repeat_rate_min / repeat_rate_max.');
+  if (repeatRateMax < 0) {
+    throw new Error('repeat_rate_max не может быть отрицательным.');
   }
 
   const loadFactor = maxDoctorLoadPercent / 100;
@@ -722,17 +766,12 @@ function calculateMonthRound_(ctx) {
     : 0;
   const marketPressureUnitsNext = marketPressureUnits * marketPressureRetention + adsToMarketPressure * adLeads;
 
-  const organicLeads = Math.max(
-    0,
-    envBaseOrganic *
-      kEconomyToDemand * envEconomy *
-      kCompetitionToDemand * envCompetition *
-      kReputationToOrganic * reputation *
-      kLocationToOrganic * locationScore
-  );
+  const organicFactorReputation = Math.max(0, 1 + kReputationToOrganic * ((reputation - 50) / 50));
+  const organicFactorLocation = Math.max(0, 1 + kLocationToOrganic * ((locationScore - 50) / 50));
+  const organicLeads = envBaseOrganic * organicFactorReputation * organicFactorLocation;
 
-  const repeatRateRaw = baseRepeatRate + kReputationToRepeat * reputation;
-  const repeatRate = clamp_(repeatRateRaw, repeatRateMin, repeatRateMax);
+  const repeatRateRaw = baseRepeatRate + kReputationToRepeat * ((reputation - 50) / 50);
+  const repeatRate = clamp_(repeatRateRaw, 0, repeatRateMax);
   const repeatLeads = patientBase * repeatRate;
 
   const newLeadsRaw = adLeads + organicLeads;
@@ -740,23 +779,22 @@ function calculateMonthRound_(ctx) {
   const totalLeads = newLeads + repeatLeads;
   const marketShare = envTotalMarket > 0 ? newLeads / envTotalMarket : 0;
 
-  const visitPriceIndex = baseVisitPrice > 0 ? visitPrice / baseVisitPrice : 0;
-  const bookingRateRaw =
-    baseBookingRate *
-    kVisitPriceToBooking * visitPriceIndex *
-    kReputationToBooking * reputation *
-    kBuildingToBooking * buildingScore *
-    kParkingToBooking * parkingScore;
-  const bookingRate = clamp_(bookingRateRaw, bookingRateMin, bookingRateMax);
+  if (marketContext.market_avg_visit_price === 0) {
+    throw new Error('market_avg_visit_price не может быть равен 0 при расчете visit_price_index.');
+  }
+  if (marketContext.market_avg_procedure_price === 0) {
+    throw new Error('market_avg_procedure_price не может быть равен 0 при расчете procedure_price_index.');
+  }
+
+  const visitPriceIndex = visitPrice / marketContext.market_avg_visit_price;
+  const bookingRateRaw = baseBookingRate + kPriceDeviationToConversion * (1 - visitPriceIndex);
+  const bookingRate = clamp_(bookingRateRaw, 0, 1);
   const bookings = totalLeads * bookingRate;
   const visitsDone = Math.min(bookings, visitCapacityLimited);
 
-  const procedurePriceIndex = baseProcedurePrice > 0 ? procedurePrice / baseProcedurePrice : 0;
-  const treatmentConversionRaw =
-    baseTreatmentConversion *
-    kProcedurePriceToConversion * procedurePriceIndex *
-    kReputationToConversion * reputation;
-  const treatmentConversion = clamp_(treatmentConversionRaw, treatmentConversionMin, treatmentConversionMax);
+  const procedurePriceIndex = procedurePrice / marketContext.market_avg_procedure_price;
+  const treatmentConversionRaw = baseTreatmentConversion + kPriceDeviationToConversion * (1 - procedurePriceIndex);
+  const treatmentConversion = clamp_(treatmentConversionRaw, 0, 1);
   const treatmentPatientsPotential = visitsDone * treatmentConversion;
   const treatmentPatients = Math.min(treatmentPatientsPotential, safeDiv_(procedureCapacityLimited, proceduresPerCourse));
   const proceduresDone = treatmentPatients * proceduresPerCourse;
@@ -862,6 +900,13 @@ function calculateMonthRound_(ctx) {
     market_share: marketShare,
     market_pressure_units_end: marketPressureUnitsNext,
     pressure_share_end: pressureShareEnd,
+    env_economy: envEconomyFromSession,
+    env_competition: envCompetition,
+    market_price_index: marketContext.market_price_index,
+    market_avg_visit_price: marketContext.market_avg_visit_price,
+    market_avg_procedure_price: marketContext.market_avg_procedure_price,
+    visit_price_index: visitPriceIndex,
+    procedure_price_index: procedurePriceIndex,
 
     booking_rate: bookingRate,
     bookings: bookings,
@@ -932,8 +977,15 @@ function appendRoundResult_(sheet, calc, runtimeTeamIdentity) {
     calc.market_share,
     calc.market_pressure_units_end,
     calc.pressure_share_end,
+    calc.env_economy,
+    calc.env_competition,
+    calc.market_price_index,
+    calc.market_avg_visit_price,
+    calc.market_avg_procedure_price,
     calc.visit_price,
     calc.procedure_price,
+    calc.visit_price_index,
+    calc.procedure_price_index,
     calc.booking_rate,
     calc.bookings,
     calc.visits_done,
@@ -1034,8 +1086,15 @@ function getRoundResultsHeaders_() {
     'market_share',
     'market_pressure_units_end',
     'pressure_share_end',
+    'env_economy',
+    'env_competition',
+    'market_price_index',
+    'market_avg_visit_price',
+    'market_avg_procedure_price',
     'visit_price',
     'procedure_price',
+    'visit_price_index',
+    'procedure_price_index',
     'booking_rate',
     'bookings',
     'visits_done',
@@ -1118,6 +1177,63 @@ function readTechParamsMap_(sheet) {
     map[code] = row[valueIdx];
   }
   return map;
+}
+
+function validateRequiredTechParameters_(techParams) {
+  REQUIRED_TECH_PARAMETER_CODES.forEach(code => {
+    getRequiredNumber_(techParams, code, 'TECH_PARAMETERS');
+  });
+
+  const marketPriceIndexMin = getRequiredNumber_(techParams, 'market_price_index_min', 'TECH_PARAMETERS');
+  const marketPriceIndexMax = getRequiredNumber_(techParams, 'market_price_index_max', 'TECH_PARAMETERS');
+  const marketPressureRetention = getRequiredNumber_(techParams, 'market_pressure_retention', 'TECH_PARAMETERS');
+  const adsToMarketPressure = getRequiredNumber_(techParams, 'k_ads_to_market_pressure', 'TECH_PARAMETERS');
+  const priceDeviationCoef = getRequiredNumber_(techParams, 'k_price_deviation_to_conversion', 'TECH_PARAMETERS');
+
+  if (marketPriceIndexMin <= 0) throw new Error('TECH_PARAMETERS: market_price_index_min должен быть > 0.');
+  if (marketPriceIndexMax <= 0) throw new Error('TECH_PARAMETERS: market_price_index_max должен быть > 0.');
+  if (marketPriceIndexMin > marketPriceIndexMax) {
+    throw new Error('TECH_PARAMETERS: market_price_index_min должен быть <= market_price_index_max.');
+  }
+  if (marketPressureRetention < 0 || marketPressureRetention > 1) {
+    throw new Error('TECH_PARAMETERS: market_pressure_retention должен быть в диапазоне [0; 1].');
+  }
+  if (adsToMarketPressure < 0) throw new Error('TECH_PARAMETERS: k_ads_to_market_pressure должен быть >= 0.');
+  if (priceDeviationCoef < 0) throw new Error('TECH_PARAMETERS: k_price_deviation_to_conversion должен быть >= 0.');
+}
+
+function computeMarketContext_(sessionConfig, techParams) {
+  const envEconomy = getRequiredNumber_(sessionConfig, 'env_economy', 'SESSION_CONFIG');
+  const envCompetition = getRequiredNumber_(sessionConfig, 'env_competition', 'SESSION_CONFIG');
+  const marketAvgVisitPriceBase = getRequiredNumber_(sessionConfig, 'market_avg_visit_price_base', 'SESSION_CONFIG');
+  const marketAvgProcedurePriceBase = getRequiredNumber_(sessionConfig, 'market_avg_procedure_price_base', 'SESSION_CONFIG');
+  const kEconomyToMarketPrice = getRequiredNumber_(techParams, 'k_economy_to_market_price', 'TECH_PARAMETERS');
+  const kCompetitionToMarketPrice = getRequiredNumber_(techParams, 'k_competition_to_market_price', 'TECH_PARAMETERS');
+  const marketPriceIndexMin = getRequiredNumber_(techParams, 'market_price_index_min', 'TECH_PARAMETERS');
+  const marketPriceIndexMax = getRequiredNumber_(techParams, 'market_price_index_max', 'TECH_PARAMETERS');
+
+  if (marketAvgVisitPriceBase <= 0) throw new Error('SESSION_CONFIG: market_avg_visit_price_base должен быть > 0.');
+  if (marketAvgProcedurePriceBase <= 0) throw new Error('SESSION_CONFIG: market_avg_procedure_price_base должен быть > 0.');
+  if (marketPriceIndexMin <= 0 || marketPriceIndexMax <= 0) {
+    throw new Error('TECH_PARAMETERS: market_price_index_min и market_price_index_max должны быть > 0.');
+  }
+  if (marketPriceIndexMin > marketPriceIndexMax) {
+    throw new Error('TECH_PARAMETERS: market_price_index_min должен быть <= market_price_index_max.');
+  }
+
+  const marketPriceIndex = clamp_(
+    1 +
+      kEconomyToMarketPrice * ((envEconomy - 50) / 50) +
+      kCompetitionToMarketPrice * ((envCompetition - 50) / 50),
+    marketPriceIndexMin,
+    marketPriceIndexMax
+  );
+
+  return {
+    market_price_index: marketPriceIndex,
+    market_avg_visit_price: marketAvgVisitPriceBase * marketPriceIndex,
+    market_avg_procedure_price: marketAvgProcedurePriceBase * marketPriceIndex
+  };
 }
 
 function getRuntimeTeamIdentity_(sessionConfigSheet, cfg) {
@@ -1210,24 +1326,16 @@ function ensureTechParametersDefaults_(sheet) {
     ['MODEL', 'market_pressure_retention', 0.8, 'Удержание market pressure'],
     ['MODEL', 'market_pressure_units_start', 0, 'Стартовые units market pressure'],
     ['MODEL', 'k_ads_to_market_pressure', 1, 'Лиды рекламы -> market pressure'],
-    ['MODEL', 'k_economy_to_demand', 1.2, 'Влияние экономики'],
-    ['MODEL', 'k_competition_to_demand', -1.0, 'Влияние конкуренции'],
     ['MODEL', 'k_reputation_to_organic', 0.8, 'Репутация→органика'],
     ['MODEL', 'k_location_to_organic', 0.5, 'Локация→органика'],
 
     ['BOOKING', 'base_booking_rate', 0.5, 'Базовая запись'],
     ['BOOKING', 'booking_rate_min', 0.05, 'Мин запись'],
     ['BOOKING', 'booking_rate_max', 0.95, 'Макс запись'],
-    ['BOOKING', 'k_visit_price_to_booking', -0.2, 'Цена приема→запись'],
-    ['BOOKING', 'k_reputation_to_booking', 0.003, 'Репутация→запись'],
-    ['BOOKING', 'k_building_to_booking', 0.0015, 'Здание→запись'],
-    ['BOOKING', 'k_parking_to_booking', 0.001, 'Парковка→запись'],
 
     ['CONV', 'base_treatment_conversion', 0.35, 'Баз. конверсия в лечение'],
     ['CONV', 'treatment_conversion_min', 0.05, 'Мин конверсия'],
     ['CONV', 'treatment_conversion_max', 0.95, 'Макс конверсия'],
-    ['CONV', 'k_procedure_price_to_conversion', -0.15, 'Цена процедуры→конверсия'],
-    ['CONV', 'k_reputation_to_conversion', 0.003, 'Репутация→конверсия'],
 
     ['REPEAT', 'base_repeat_rate', 0.1, 'Базовый repeat'],
     ['REPEAT', 'repeat_rate_min', 0, 'Мин repeat'],
@@ -1321,6 +1429,21 @@ function getNumberOrDefault_(obj, key, fallback) {
   if (!obj || !(key in obj)) return fallback;
   const n = Number(obj[key]);
   return isNaN(n) ? fallback : n;
+}
+
+function getRequiredNumber_(obj, key, sourceName) {
+  if (!obj || !(key in obj)) {
+    throw new Error(`${sourceName}: отсутствует обязательный parameter_code=${key}.`);
+  }
+  const value = obj[key];
+  if (value === '' || value === null || value === undefined) {
+    throw new Error(`${sourceName}: пустое значение для parameter_code=${key}.`);
+  }
+  const numericValue = Number(value);
+  if (isNaN(numericValue)) {
+    throw new Error(`${sourceName}: нечисловое значение для parameter_code=${key}.`);
+  }
+  return numericValue;
 }
 
 function clamp_(value, minVal, maxVal) {

@@ -26,6 +26,46 @@ const INITIALIZATION_CONFIG = {
   sourceMarkerText: 'Подтянуто из модели',
 };
 
+const REQUIRED_ENVIRONMENT_CODES = [
+  'env_economy',
+  'env_competition',
+  'env_total_market',
+  'env_base_organic',
+  'market_avg_visit_price_base',
+  'market_avg_procedure_price_base'
+];
+
+const REQUIRED_COEFFICIENT_CODES = [
+  'alpha',
+  'beta',
+  'base_cpl',
+  'base_repeat_rate',
+  'repeat_rate_max',
+  'k_reputation_to_repeat',
+  'k_loyalty_to_quality',
+  'k_loyalty_to_service',
+  'quality_reputation_bonus_coef',
+  'service_reputation_bonus_coef',
+  'k_reputation_to_organic',
+  'k_location_to_organic',
+  'base_booking_rate',
+  'base_treatment_conversion',
+  'fire_loyalty_penalty',
+  'base_rent_month',
+  'doctor_salary_month',
+  'base_admin_cost',
+  'start_cash_balance',
+  'stability_bonus',
+  'market_pressure_retention',
+  'market_pressure_units_start',
+  'k_ads_to_market_pressure',
+  'k_economy_to_market_price',
+  'k_competition_to_market_price',
+  'market_price_index_min',
+  'market_price_index_max',
+  'k_price_deviation_to_conversion'
+];
+
 
 function onOpenInitialization() {
   SpreadsheetApp.getUi()
@@ -202,6 +242,7 @@ function syncStartSetupWithLotCatalogInSpreadsheet_(ss) {
   const startSheet = getOrCreateSheetForInit_(ss, cfg.startSheetName);
   ensureStartSetupTemplateForInit_(startSheet, cfg.sourceMarkerText);
   applyLotBindingsInStartSetup_(ss);
+  syncEnvironmentValuesToStartSetup_(ss);
 }
 
 /**
@@ -297,14 +338,11 @@ function isModelPulledMarker_(source, marker) {
 
 
 function ensureStartSetupTemplateForInit_(sheet, sourceMarkerText) {
-  if (sheet.getLastRow() > 1) return;
-
   const headers = [
     'block','parameter_code','parameter_name','value_input','default_or_source','who_fills','gameplay_effect'
   ];
 
-  const rows = [
-    headers,
+  const bodyRows = [
     ['TEAM','team_name','Название команды','Main Team','Ручной ввод','player','Идентификация команды'],
     ['LOT','selected_lot_id','ID выбранного лота','LOT_01','Ручной ввод','player','Выбор помещения'],
     ['LOT','selected_lot_name','Название лота','=IFERROR(VLOOKUP($D$3;12_LotList!$A:$J;2;FALSE);"")','Формула из 12_LotList','formula','Авто из каталога'],
@@ -318,14 +356,25 @@ function ensureStartSetupTemplateForInit_(sheet, sourceMarkerText) {
     ['LOT','selected_kitchen_score','Бытовой комфорт','=IFERROR(VLOOKUP($D$3;12_LotList!$A:$J;10;FALSE);"")','Формула из 12_LotList','formula','Авто из каталога'],
     ['ROOMS','visit_rooms','Приемные кабинеты',0,'Ручной ввод','player','visit_rooms + ftl_rooms = total'],
     ['ROOMS','ftl_rooms','ФТЛ кабинеты',0,'Ручной ввод','player','visit_rooms + ftl_rooms = total'],
-    ['HR','doctors_start','Врачей на старте',0,'Ручной ввод','player','<= total_cabinets*2']
+    ['HR','doctors_start','Врачей на старте',0,'Ручной ввод','player','<= total_cabinets*2'],
+    ['ENVIRONMENT','env_economy','Экономика среды','',sourceMarkerText,'model','Параметр среды сессии'],
+    ['ENVIRONMENT','env_competition','Конкуренция среды','',sourceMarkerText,'model','Параметр среды сессии'],
+    ['ENVIRONMENT','env_total_market','Общий размер рынка','',sourceMarkerText,'model','Параметр среды сессии'],
+    ['ENVIRONMENT','env_base_organic','Базовый органический поток','',sourceMarkerText,'model','Параметр среды сессии'],
+    ['ENVIRONMENT','market_avg_visit_price_base','Базовая среднерыночная цена приема','',sourceMarkerText,'model','Параметр среды сессии'],
+    ['ENVIRONMENT','market_avg_procedure_price_base','Базовая среднерыночная цена процедуры','',sourceMarkerText,'model','Параметр среды сессии']
   ];
 
-  sheet.clear();
-  sheet.getRange(1,1,rows.length,headers.length).setValues(rows);
-  // Устанавливаем формулы корректно с разделителем ';'
-  for (let r=4; r<=11; r++) {
-    const f = rows[r-1][3];
+  if (sheet.getLastRow() <= 1) {
+    const rows = [headers].concat(bodyRows);
+    sheet.clear();
+    sheet.getRange(1,1,rows.length,headers.length).setValues(rows);
+  } else {
+    ensureStartSetupRowsPresent_(sheet, bodyRows);
+  }
+
+  for (let r = 4; r <= 11; r++) {
+    const f = bodyRows[r - 2][3];
     sheet.getRange(r,4).setFormula(f);
   }
 }
@@ -375,18 +424,11 @@ function buildTechMasterRegistryRows_(ss) {
   const environmentMap = buildEnvironmentMap_(ss);
   const hiddenStart = buildHiddenStateStartMap_(ss);
   const constantsMap = buildConstantsMap_(ss);
-  const startCashFromCoeff = getCoefficientValueByCode_(ss, 'start_cash_balance');
-  if (startCashFromCoeff === null || startCashFromCoeff === undefined || startCashFromCoeff === '') {
-    throw new Error('В 08_Coefficients отсутствует start_cash_balance в колонке "Пример значения (input)".');
-  }
+  validateRequiredInitializationSources_(environmentMap, map);
 
   const pick = (k, d) => (k in map && map[k] !== '' && map[k] !== null && map[k] !== undefined) ? map[k] : d;
-  const pickEnvironment = (k, d) => (k in environmentMap && environmentMap[k] !== '' && environmentMap[k] !== null && environmentMap[k] !== undefined) ? environmentMap[k] : d;
-  const pickPriorityEnvironment = (k, d) => {
-    const envVal = pickEnvironment(k, null);
-    if (envVal !== null && envVal !== '' && envVal !== undefined) return envVal;
-    return pick(k, d);
-  };
+  const pickRequiredEnvironment = k => environmentMap[k];
+  const pickRequiredCoeff = k => map[k];
   const pickConst = (k, d) => (k in constantsMap && constantsMap[k] !== '' && constantsMap[k] !== null && constantsMap[k] !== undefined) ? constantsMap[k] : d;
   const pickHidden = (keys, d) => {
     for (let i = 0; i < keys.length; i++) {
@@ -398,13 +440,11 @@ function buildTechMasterRegistryRows_(ss) {
 
   const rows = [
     ['block','parameter_code','value','comment'],
-    ['FIN','base_cpl', pick('base_cpl',1000), 'Master registry'],
-    ['FIN','base_rent_month', pick('base_rent_month',500000), 'Master registry'],
-    ['FIN','doctor_salary_month', pick('doctor_salary_month',250000), 'Master registry'],
-    ['FIN','base_admin_cost', pick('base_admin_cost',150000), 'Master registry'],
-    ['FIN','start_cash_balance', startCashFromCoeff, 'Master registry (from 08_Coefficients)'],
-    ['FIN','base_visit_price', pickPriorityEnvironment('base_visit_price', pick('initial_visit_price', 3000)), 'Master registry (Environment -> 08_Coefficients -> default)'],
-    ['FIN','base_procedure_price', pickPriorityEnvironment('base_procedure_price', pick('initial_procedure_price', 500)), 'Master registry (Environment -> 08_Coefficients -> default)'],
+    ['FIN','base_cpl', pickRequiredCoeff('base_cpl'), 'Required from 08_Coefficients'],
+    ['FIN','base_rent_month', pickRequiredCoeff('base_rent_month'), 'Required from 08_Coefficients'],
+    ['FIN','doctor_salary_month', pickRequiredCoeff('doctor_salary_month'), 'Required from 08_Coefficients'],
+    ['FIN','base_admin_cost', pickRequiredCoeff('base_admin_cost'), 'Required from 08_Coefficients'],
+    ['FIN','start_cash_balance', pickRequiredCoeff('start_cash_balance'), 'Master registry (required from 08_Coefficients)'],
 
     ['CAPACITY','work_shifts_per_month', pickConst('work_shifts_per_doctor', pick('work_shifts_per_month',15)), 'Imported from 07_Constants / Значение (input)'],
     ['CAPACITY','visits_per_shift', pickConst('visits_per_shift',10), 'Imported from 07_Constants / Значение (input)'],
@@ -414,18 +454,20 @@ function buildTechMasterRegistryRows_(ss) {
     ['LIMITS','state_min', pickConst('state_min',0), 'Imported from 07_Constants / Значение (input)'],
     ['LIMITS','state_max', pickConst('state_max',100), 'Imported from 07_Constants / Значение (input)'],
 
-    ['MODEL','alpha', pick('alpha',1.2), 'Master registry'],
-    ['MODEL','beta', pick('beta',2), 'Master registry'],
-    ['MODEL','env_total_market', pickPriorityEnvironment('env_total_market', 1000), 'Master registry (Environment -> 08_Coefficients -> default)'],
-    ['MODEL','env_base_organic', pickPriorityEnvironment('env_base_organic', 100), 'Master registry (Environment -> 08_Coefficients -> default)'],
-    ['MODEL','market_pressure_retention', pick('market_pressure_retention', 0.8), 'Master registry'],
-    ['MODEL','market_pressure_units_start', pick('market_pressure_units_start', 0), 'Master registry'],
-    ['MODEL','k_ads_to_market_pressure', pick('k_ads_to_market_pressure', 1), 'Master registry'],
-    ['MODEL','env_economy', pickPriorityEnvironment('env_economy', 50), 'Master registry (Environment -> 08_Coefficients -> default)'],
-    ['MODEL','env_competition', pickPriorityEnvironment('env_competition', 50), 'Master registry (Environment -> 08_Coefficients -> default)'],
-    ['MODEL','base_booking_rate', pick('base_booking_rate',0.5), 'Master registry'],
-    ['MODEL','base_treatment_conversion', pick('base_treatment_conversion',0.35), 'Master registry'],
-    ['MODEL','base_repeat_rate', pick('base_repeat_rate',0.15), 'Master registry'],
+    ['MODEL','alpha', pickRequiredCoeff('alpha'), 'Required from 08_Coefficients'],
+    ['MODEL','beta', pickRequiredCoeff('beta'), 'Required from 08_Coefficients'],
+    ['MODEL','env_total_market', pickRequiredEnvironment('env_total_market'), 'Required from 01_Environment'],
+    ['MODEL','env_base_organic', pickRequiredEnvironment('env_base_organic'), 'Required from 01_Environment'],
+    ['MODEL','env_economy', pickRequiredEnvironment('env_economy'), 'Required from 01_Environment'],
+    ['MODEL','env_competition', pickRequiredEnvironment('env_competition'), 'Required from 01_Environment'],
+    ['MODEL','market_avg_visit_price_base', pickRequiredEnvironment('market_avg_visit_price_base'), 'Required from 01_Environment'],
+    ['MODEL','market_avg_procedure_price_base', pickRequiredEnvironment('market_avg_procedure_price_base'), 'Required from 01_Environment'],
+    ['MODEL','market_pressure_retention', pickRequiredCoeff('market_pressure_retention'), 'Required from 08_Coefficients'],
+    ['MODEL','market_pressure_units_start', pickRequiredCoeff('market_pressure_units_start'), 'Required from 08_Coefficients'],
+    ['MODEL','k_ads_to_market_pressure', pickRequiredCoeff('k_ads_to_market_pressure'), 'Required from 08_Coefficients'],
+    ['MODEL','base_booking_rate', pickRequiredCoeff('base_booking_rate'), 'Required from 08_Coefficients'],
+    ['MODEL','base_treatment_conversion', pickRequiredCoeff('base_treatment_conversion'), 'Required from 08_Coefficients'],
+    ['MODEL','base_repeat_rate', pickRequiredCoeff('base_repeat_rate'), 'Required from 08_Coefficients'],
 
     ['STATE_START','reputation_start', pickHidden(['reputation_start','reputation'], 50), 'Imported from 05_HiddenState / Стартовые значения'],
     ['STATE_START','service_start', pickHidden(['service_start','service'], 50), 'Imported from 05_HiddenState / Стартовые значения'],
@@ -438,13 +480,14 @@ function buildTechMasterRegistryRows_(ss) {
 
 
   const requestedCoeffKeys = [
-    'k_service_to_booking','k_building_to_booking','k_parking_to_booking',
-    'k_procedure_price_to_conversion','k_reputation_to_conversion','k_service_to_conversion','k_quality_to_conversion','k_burnout_to_conversion',
     'k_reputation_to_repeat','training_service_effect_coef','training_quality_effect_coef','training_effect_cap',
     'burnout_service_penalty_coef','burnout_quality_penalty_coef','staff_comfort_burnout_relief_coef','kitchen_burnout_relief_coef',
     'quality_reputation_bonus_coef','service_reputation_bonus_coef','aggressive_sales_reputation_penalty',
     'quality_loyalty_bonus_coef','service_loyalty_bonus_coef','reputation_loyalty_bonus_coef','stability_bonus','fire_loyalty_penalty',
-    'market_pressure_retention','market_pressure_units_start','k_ads_to_market_pressure'
+    'market_pressure_retention','market_pressure_units_start','k_ads_to_market_pressure',
+    'k_loyalty_to_quality','k_loyalty_to_service','k_reputation_to_organic','k_location_to_organic',
+    'k_economy_to_market_price','k_competition_to_market_price','market_price_index_min',
+    'market_price_index_max','k_price_deviation_to_conversion'
   ];
   requestedCoeffKeys.forEach(k => {
     if (k in map && map[k] !== '' && map[k] !== null && map[k] !== undefined) {
@@ -466,6 +509,50 @@ function buildTechMasterRegistryRows_(ss) {
   });
 
   return rows;
+}
+
+function ensureStartSetupRowsPresent_(sheet, rowsToEnsure) {
+  const values = sheet.getDataRange().getValues();
+  if (!values || values.length === 0) return;
+
+  const headers = values[0].map(v => String(v || '').trim());
+  const hm = buildHeaderMapForInit_(headers);
+  const codeIdx = pickHeaderIndex_(hm, ['parameter_code'], 1);
+  const existing = {};
+
+  for (let r = 1; r < values.length; r++) {
+    const code = String(values[r][codeIdx] || '').trim();
+    if (code) existing[code] = true;
+  }
+
+  const missingRows = rowsToEnsure.filter(row => !existing[String(row[1] || '').trim()]);
+  if (!missingRows.length) return;
+
+  sheet.getRange(sheet.getLastRow() + 1, 1, missingRows.length, headers.length).setValues(missingRows);
+}
+
+function syncEnvironmentValuesToStartSetup_(ss) {
+  const cfg = INITIALIZATION_CONFIG;
+  const startSheet = mustGetSheetForInit_(ss, cfg.startSheetName);
+  const environmentMap = buildEnvironmentMap_(ss);
+  validateRequiredEnvironmentValues_(environmentMap);
+
+  const values = startSheet.getDataRange().getValues();
+  if (!values || values.length < 2) throw new Error('START_SETUP пуст.');
+
+  const headers = values[0].map(v => String(v || '').trim());
+  const hm = buildHeaderMapForInit_(headers);
+  const codeIdx = pickHeaderIndex_(hm, ['parameter_code'], 1);
+  const valueIdx = pickHeaderIndex_(hm, ['value_input'], 3);
+  const rowByCode = buildStartSetupRowByCode_(values, codeIdx);
+
+  REQUIRED_ENVIRONMENT_CODES.forEach(code => {
+    const rowNo = rowByCode[code];
+    if (!rowNo) {
+      throw new Error(`В START_SETUP отсутствует строка для parameter_code=${code}.`);
+    }
+    startSheet.getRange(rowNo, valueIdx + 1).setValue(environmentMap[code]);
+  });
 }
 
 function buildEnvironmentMap_(ss) {
@@ -625,6 +712,62 @@ function getCoefficientValueByCode_(ss, codeToFind) {
   }
 
   return null;
+}
+
+function validateRequiredInitializationSources_(environmentMap, coefficientMap) {
+  validateRequiredEnvironmentValues_(environmentMap);
+  validateRequiredCoefficientValues_(coefficientMap);
+}
+
+function validateRequiredEnvironmentValues_(environmentMap) {
+  REQUIRED_ENVIRONMENT_CODES.forEach(code => {
+    const value = getRequiredNumericValue_(environmentMap, code, '01_Environment');
+    if ((code === 'market_avg_visit_price_base' || code === 'market_avg_procedure_price_base') && value <= 0) {
+      throw new Error(`В листе 01_Environment parameter_code=${code} должен быть > 0.`);
+    }
+    if ((code === 'env_total_market' || code === 'env_base_organic') && value < 0) {
+      throw new Error(`В листе 01_Environment parameter_code=${code} должен быть >= 0.`);
+    }
+  });
+}
+
+function validateRequiredCoefficientValues_(coefficientMap) {
+  REQUIRED_COEFFICIENT_CODES.forEach(code => {
+    const value = getRequiredNumericValue_(coefficientMap, code, '08_Coefficients');
+    if ((code === 'market_price_index_min' || code === 'market_price_index_max') && value <= 0) {
+      throw new Error(`В листе 08_Coefficients parameter_code=${code} должен быть > 0.`);
+    }
+    if (code === 'k_price_deviation_to_conversion' && value < 0) {
+      throw new Error('В листе 08_Coefficients parameter_code=k_price_deviation_to_conversion должен быть >= 0.');
+    }
+    if (code === 'market_pressure_retention' && (value < 0 || value > 1)) {
+      throw new Error('В листе 08_Coefficients parameter_code=market_pressure_retention должен быть в диапазоне [0; 1].');
+    }
+    if (code === 'k_ads_to_market_pressure' && value < 0) {
+      throw new Error('В листе 08_Coefficients parameter_code=k_ads_to_market_pressure должен быть >= 0.');
+    }
+  });
+
+  const minValue = Number(coefficientMap.market_price_index_min);
+  const maxValue = Number(coefficientMap.market_price_index_max);
+  if (minValue > maxValue) {
+    throw new Error('В листе 08_Coefficients должно выполняться market_price_index_min <= market_price_index_max.');
+  }
+}
+
+function getRequiredNumericValue_(map, code, sheetName) {
+  if (!map || !(code in map)) {
+    throw new Error(`В листе ${sheetName} отсутствует обязательный parameter_code=${code}.`);
+  }
+  const rawValue = map[code];
+  if (rawValue === '' || rawValue === null || rawValue === undefined) {
+    throw new Error(`В листе ${sheetName} пустое значение для parameter_code=${code}.`);
+  }
+  const numericValue = Number(rawValue);
+  if (isNaN(numericValue)) {
+    throw new Error(`В листе ${sheetName} нечисловое значение для parameter_code=${code}.`);
+  }
+  return numericValue;
 }
 
 function getOrCreateSheetForInit_(ss, name) {
