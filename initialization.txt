@@ -745,8 +745,8 @@ function validateRequiredCoefficientValues_(coefficientMap) {
     }
   });
 
-  const minValue = Number(coefficientMap.market_price_index_min);
-  const maxValue = Number(coefficientMap.market_price_index_max);
+  const minValue = getRequiredNumericValue_(coefficientMap, 'market_price_index_min', '08_Coefficients');
+  const maxValue = getRequiredNumericValue_(coefficientMap, 'market_price_index_max', '08_Coefficients');
   if (minValue > maxValue) {
     throw new Error('В листе 08_Coefficients должно выполняться market_price_index_min <= market_price_index_max.');
   }
@@ -760,7 +760,16 @@ function getRequiredNumericValue_(map, code, sheetName) {
   if (rawValue === '' || rawValue === null || rawValue === undefined) {
     throw new Error(`В листе ${sheetName} пустое значение для parameter_code=${code}.`);
   }
-  const numericValue = Number(rawValue);
+
+  if (typeof rawValue === 'string' && /\d\.\d/.test(rawValue.trim())) {
+    throw new Error(`В листе ${sheetName} для parameter_code=${code} используйте запятую, а не точку, в дробной части.`);
+  }
+
+  const normalizedValue = typeof rawValue === 'string'
+    ? rawValue.replace(/\s+/g, '').replace(',', '.')
+    : rawValue;
+  const numericValue = Number(normalizedValue);
+
   if (isNaN(numericValue)) {
     throw new Error(`В листе ${sheetName} нечисловое значение для parameter_code=${code}.`);
   }
