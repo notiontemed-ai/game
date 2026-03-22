@@ -33,8 +33,6 @@ function onOpenInitialization() {
     .addItem('Create new game session from catalog', 'createNewGameSessionFromCatalog')
     .addSeparator()
     .addItem('Sync START_SETUP with lot catalog', 'syncStartSetupWithLotCatalog')
-    .addItem('Prepare ROUND_INPUT for next month', 'prepareRoundInputForNextMonth')
-    .addItem('Run next month round', 'runNextMonthRound')
     .addToUi();
 }
 
