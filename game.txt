@@ -383,7 +383,7 @@ function writeSessionConfigSheet_(sheet, setup, derived, tech, cfg) {
     ['FINANCE', 'base_admin_cost', getNumberOrDefault_(tech, 'base_admin_cost', 150000), 'Базовые административные расходы']
   ];
 
-  sheet.getRange(1, 1, rows.length, 4).setValues(rows);
+  writeMatrixToSheet_(sheet, 1, 1, rows, 4);
   formatSimpleSheet_(sheet, 4);
 }
 
@@ -413,8 +413,8 @@ function writeTeamStateSheet_(sheet, setup, derived, tech, runtimeTeamIdentity) 
     'Initial state created from START_SETUP'
   ];
 
-  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-  sheet.getRange(2, 1, 1, headers.length).setValues([row]);
+  writeMatrixToSheet_(sheet, 1, 1, [headers], headers.length);
+  writeMatrixToSheet_(sheet, 2, 1, [row], headers.length);
   formatSimpleSheet_(sheet, headers.length);
 }
 
@@ -469,6 +469,9 @@ function writeRoundResultsBaseline_(sheet, setup, derived, tech, sessionConfig, 
     0,
     0,
     0,
+    0,
+    0,
+    0,
     Number(tech.start_cash_balance),
     0,
     0,
@@ -477,8 +480,8 @@ function writeRoundResultsBaseline_(sheet, setup, derived, tech, sessionConfig, 
     'Round 0 baseline created during session initialization'
   ];
 
-  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-  sheet.getRange(2, 1, 1, headers.length).setValues([row]);
+  writeMatrixToSheet_(sheet, 1, 1, [headers], headers.length);
+  writeMatrixToSheet_(sheet, 2, 1, [row], headers.length);
   formatSimpleSheet_(sheet, headers.length);
 }
 
@@ -489,7 +492,7 @@ function ensureRoundInputHeaders_(sheet) {
     'marketing_budget', 'training_budget', 'hire_count', 'fire_count',
     'doctors_visit_assigned', 'doctors_ftl_assigned', 'max_doctor_load_percent', 'comment'
   ];
-  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  writeMatrixToSheet_(sheet, 1, 1, [headers], headers.length);
   formatSimpleSheet_(sheet, headers.length);
 }
 
@@ -506,12 +509,12 @@ function findRoundInputRow_(sheet, teamId, roundNo) {
 }
 
 function appendRoundInputRow_(sheet, data) {
-  sheet.appendRow([
+  appendNormalizedRow_(sheet, [
     data.round_no, data.team_id, data.team_name, data.visit_price, data.procedure_price,
     data.marketing_budget, data.training_budget, data.hire_count, data.fire_count,
     data.doctors_visit_assigned, data.doctors_ftl_assigned, data.max_doctor_load_percent,
     data.comment || ''
-  ]);
+  ], 13);
 }
 
 function readRoundInputForRound_(sheet, teamId, roundNo) {
@@ -956,7 +959,7 @@ function appendRoundResult_(sheet, calc, runtimeTeamIdentity) {
     'Month calculated'
   ];
 
-  sheet.appendRow(row);
+  appendNormalizedRow_(sheet, row, getRoundResultsHeaders_().length);
   formatSimpleSheet_(sheet, getRoundResultsHeaders_().length);
 }
 
@@ -988,21 +991,21 @@ function appendTeamState_(sheet, calc, runtimeTeamIdentity) {
     'State after month calculation'
   ];
 
-  sheet.appendRow(row);
+  appendNormalizedRow_(sheet, row, getTeamStateHeaders_().length);
   formatSimpleSheet_(sheet, getTeamStateHeaders_().length);
 }
 
 function ensureRoundResultsHeaders_(sheet) {
   if (sheet.getLastRow() > 0) return;
   const headers = getRoundResultsHeaders_();
-  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  writeMatrixToSheet_(sheet, 1, 1, [headers], headers.length);
   formatSimpleSheet_(sheet, headers.length);
 }
 
 function ensureTeamStateHeaders_(sheet) {
   if (sheet.getLastRow() > 0) return;
   const headers = getTeamStateHeaders_();
-  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  writeMatrixToSheet_(sheet, 1, 1, [headers], headers.length);
   formatSimpleSheet_(sheet, headers.length);
 }
 
@@ -1252,8 +1255,24 @@ function ensureTechParametersDefaults_(sheet) {
   ];
 
   clearSheetCompletely_(sheet);
-  sheet.getRange(1, 1, rows.length, 4).setValues(rows);
+  writeMatrixToSheet_(sheet, 1, 1, rows, 4);
   formatSimpleSheet_(sheet, 4);
+}
+
+function normalizeRowWidth_(row, width) {
+  const normalized = Array.isArray(row) ? row.slice(0, width) : [];
+  while (normalized.length < width) normalized.push('');
+  return normalized;
+}
+
+function writeMatrixToSheet_(sheet, startRow, startCol, rows, width) {
+  if (!rows || !rows.length || !width) return;
+  const normalizedRows = rows.map(row => normalizeRowWidth_(row, width));
+  sheet.getRange(startRow, startCol, normalizedRows.length, width).setValues(normalizedRows);
+}
+
+function appendNormalizedRow_(sheet, row, width) {
+  writeMatrixToSheet_(sheet, sheet.getLastRow() + 1, 1, [row], width);
 }
 
 function mustGetSheet_(ss, name) {

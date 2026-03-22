@@ -42,8 +42,8 @@ function onOpenInitialization() {
  *
  * Поведение:
  * - создает новую таблицу;
- * - копирует из текущей таблицы листы START_SETUP / TECH_PARAMETERS, если они есть;
- * - если листов нет, создает их по шаблону;
+ * - всегда создает/обновляет в новой таблице листы START_SETUP и TECH_PARAMETERS с нуля;
+ * - копирует только лист каталога лотов 12_LotList, если он есть;
  * - в новой таблице подготавливает START_SETUP значениями из модели.
  */
 function createNewGameSessionFromCatalog() {
@@ -143,17 +143,14 @@ function bootstrapRequiredSheetsInNewSession_(sourceSs, targetSs, cfg) {
   }
 
   const lotSheet = getOrCreateSheetForInit_(targetSs, cfg.lotListSheetName);
-
-  const copiedStart = copySheetValuesByName_(sourceSs, startSheet, cfg.startSheetName);
-  const copiedTech = copySheetValuesByName_(sourceSs, techSheet, cfg.techSheetName);
   const copiedLot = copySheetValuesByName_(sourceSs, lotSheet, cfg.lotListSheetName);
 
-  if (!copiedStart) {
-    ensureStartSetupTemplateForInit_(startSheet, cfg.sourceMarkerText);
-  }
-  if (!copiedTech) {
-    ensureTechParametersTemplateForInit_(techSheet, sourceSs);
-  }
+  startSheet.clear();
+  techSheet.clear();
+
+  ensureStartSetupTemplateForInit_(startSheet, cfg.sourceMarkerText);
+  ensureTechParametersTemplateForInit_(techSheet, sourceSs);
+
   if (!copiedLot) {
     ensureLotListTemplateForInit_(lotSheet);
   }
