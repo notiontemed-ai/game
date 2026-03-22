@@ -57,6 +57,67 @@ const REQUIRED_TECH_PARAMETER_CODES = [
   'k_price_deviation_to_conversion'
 ];
 
+const TECH_PARAMETER_DEFAULT_ROWS = [
+  ['DEFAULT', 'default_marketing_budget', 0, 'Дефолт маркетинга'],
+  ['DEFAULT', 'default_training_budget', 0, 'Дефолт обучения'],
+
+  ['FIN', 'base_rent_month', 500000, 'Базовая аренда'],
+  ['FIN', 'doctor_salary_month', 250000, 'Зарплата врача/мес'],
+  ['FIN', 'base_admin_cost', 150000, 'Постоянные адм. расходы'],
+  ['FUNNEL', 'base_cpl', 1000, 'Базовый CPL'],
+
+  ['CAPACITY', 'work_shifts_per_month', 15, 'Смен на врача'],
+  ['CAPACITY', 'visits_per_shift', 10, 'Приемов за смену'],
+  ['CAPACITY', 'procedures_per_shift', 50, 'Процедур за смену'],
+  ['CAPACITY', 'procedures_per_course', 10, 'Процедур в курсе'],
+
+  ['STATE', 'state_min', 0, 'Мин hidden state'],
+  ['STATE', 'state_max', 100, 'Макс hidden state'],
+
+  ['MODEL', 'alpha', 1.2, 'CPL alpha'],
+  ['MODEL', 'beta', 2, 'CPL beta'],
+  ['MODEL', 'market_pressure_retention', 0.8, 'Удержание market pressure'],
+  ['MODEL', 'market_pressure_units_start', 0, 'Стартовые units market pressure'],
+  ['MODEL', 'k_ads_to_market_pressure', 1, 'Лиды рекламы -> market pressure'],
+  ['MODEL', 'k_reputation_to_organic', 0.8, 'Репутация→органика'],
+  ['MODEL', 'k_location_to_organic', 0.5, 'Локация→органика'],
+  ['MODEL', 'k_economy_to_market_price', 0, 'Экономика→индекс рыночной цены'],
+  ['MODEL', 'k_competition_to_market_price', 0, 'Конкуренция→индекс рыночной цены'],
+  ['MODEL', 'market_price_index_min', 0.85, 'Минимальный индекс рыночной цены'],
+  ['MODEL', 'market_price_index_max', 1.15, 'Максимальный индекс рыночной цены'],
+  ['MODEL', 'k_price_deviation_to_conversion', 0.5, 'Отклонение цены→конверсия'],
+
+  ['BOOKING', 'base_booking_rate', 0.5, 'Базовая запись'],
+  ['BOOKING', 'booking_rate_min', 0.05, 'Мин запись'],
+  ['BOOKING', 'booking_rate_max', 0.95, 'Макс запись'],
+
+  ['CONV', 'base_treatment_conversion', 0.35, 'Баз. конверсия в лечение'],
+  ['CONV', 'treatment_conversion_min', 0.05, 'Мин конверсия'],
+  ['CONV', 'treatment_conversion_max', 0.95, 'Макс конверсия'],
+
+  ['REPEAT', 'base_repeat_rate', 0.1, 'Базовый repeat'],
+  ['REPEAT', 'repeat_rate_min', 0, 'Мин repeat'],
+  ['REPEAT', 'repeat_rate_max', 0.5, 'Макс repeat'],
+  ['REPEAT', 'k_reputation_to_repeat', 0.01, 'Репутация→repeat'],
+
+  ['STATE_DYN', 'training_quality_effect_coef', 0.00002, 'Обучение→качество'],
+  ['STATE_DYN', 'training_effect_cap', 5, 'Кэп эффекта обучения'],
+  ['STATE_DYN', 'k_loyalty_to_quality', 0.03, 'Лояльность→качество'],
+  ['STATE_DYN', 'burnout_quality_penalty_coef', 0.15, 'Выгорание штраф качество'],
+  ['STATE_DYN', 'quality_reputation_bonus_coef', 0.05, 'Качество→репутация'],
+  ['STATE_DYN', 'aggressive_sales_reputation_penalty', 0.08, 'Агресс. продажи штраф'],
+  ['STATE_DYN', 'stability_bonus', 0, 'Автономный бонус стабильности лояльности'],
+  ['STATE_DYN', 'fire_loyalty_penalty', 10, 'Увольнения штраф лояльности'],
+  ['STATE_DYN', 'loyalty_growth_cap', 10, 'Ограничение роста лояльности за ход'],
+  ['STATE_DYN', 'staff_comfort_burnout_relief_coef', 0.03, 'Комфорт персонала снижает выгорание'],
+  ['STATE_DYN', 'kitchen_burnout_relief_coef', 0.02, 'Кухня снижает выгорание'],
+  ['STATE_DYN', 'burnout_growth_medium', 1, 'Рост выгорания при средней нагрузке'],
+  ['STATE_DYN', 'burnout_growth_high', 3, 'Рост выгорания при высокой нагрузке'],
+  ['STATE_DYN', 'burnout_recovery_if_low_load', -2, 'Восстановление при низкой нагрузке'],
+
+  ['FIN', 'start_cash_balance', 3000000, 'Стартовый остаток денежных средств']
+];
+
 
 function onOpen() {
   SpreadsheetApp.getUi()
@@ -1283,65 +1344,31 @@ function getLatestRoundResult_(sheet, teamId) {
 }
 
 function ensureTechParametersDefaults_(sheet) {
-  if (sheet.getLastRow() > 1) return;
+  const header = ['block', 'parameter_code', 'value', 'comment'];
+  const lastRow = sheet.getLastRow();
 
-  const rows = [
-    ['block', 'parameter_code', 'value', 'comment'],
-    ['DEFAULT', 'default_marketing_budget', 0, 'Дефолт маркетинга'],
-    ['DEFAULT', 'default_training_budget', 0, 'Дефолт обучения'],
+  if (lastRow <= 1) {
+    clearSheetCompletely_(sheet);
+    writeMatrixToSheet_(sheet, 1, 1, [header].concat(TECH_PARAMETER_DEFAULT_ROWS), 4);
+    formatSimpleSheet_(sheet, 4);
+    return;
+  }
 
-    ['FIN', 'base_rent_month', 500000, 'Базовая аренда'],
-    ['FIN', 'doctor_salary_month', 250000, 'Зарплата врача/мес'],
-    ['FIN', 'base_admin_cost', 150000, 'Постоянные адм. расходы'],
-    ['FUNNEL', 'base_cpl', 1000, 'Базовый CPL'],
+  const values = sheet.getDataRange().getValues();
+  const headerMap = buildHeaderMap_(values[0].map(v => String(v).trim()));
+  const codeIdx = headerMap.parameter_code !== undefined ? headerMap.parameter_code : 1;
+  const existingCodes = {};
 
-    ['CAPACITY', 'work_shifts_per_month', 15, 'Смен на врача'],
-    ['CAPACITY', 'visits_per_shift', 10, 'Приемов за смену'],
-    ['CAPACITY', 'procedures_per_shift', 50, 'Процедур за смену'],
-    ['CAPACITY', 'procedures_per_course', 10, 'Процедур в курсе'],
+  for (let r = 1; r < values.length; r++) {
+    const code = String(values[r][codeIdx] || '').trim();
+    if (!code) continue;
+    existingCodes[code] = true;
+  }
 
-    ['STATE', 'state_min', 0, 'Мин hidden state'],
-    ['STATE', 'state_max', 100, 'Макс hidden state'],
+  const missingRows = TECH_PARAMETER_DEFAULT_ROWS.filter(row => !existingCodes[String(row[1])]);
+  if (!missingRows.length) return;
 
-    ['MODEL', 'alpha', 1.2, 'CPL alpha'],
-    ['MODEL', 'beta', 2, 'CPL beta'],
-    ['MODEL', 'market_pressure_retention', 0.8, 'Удержание market pressure'],
-    ['MODEL', 'market_pressure_units_start', 0, 'Стартовые units market pressure'],
-    ['MODEL', 'k_ads_to_market_pressure', 1, 'Лиды рекламы -> market pressure'],
-    ['MODEL', 'k_reputation_to_organic', 0.8, 'Репутация→органика'],
-    ['MODEL', 'k_location_to_organic', 0.5, 'Локация→органика'],
-
-    ['BOOKING', 'base_booking_rate', 0.5, 'Базовая запись'],
-    ['BOOKING', 'booking_rate_min', 0.05, 'Мин запись'],
-    ['BOOKING', 'booking_rate_max', 0.95, 'Макс запись'],
-
-    ['CONV', 'base_treatment_conversion', 0.35, 'Баз. конверсия в лечение'],
-    ['CONV', 'treatment_conversion_min', 0.05, 'Мин конверсия'],
-    ['CONV', 'treatment_conversion_max', 0.95, 'Макс конверсия'],
-
-    ['REPEAT', 'base_repeat_rate', 0.1, 'Базовый repeat'],
-    ['REPEAT', 'repeat_rate_min', 0, 'Мин repeat'],
-    ['REPEAT', 'repeat_rate_max', 0.5, 'Макс repeat'],
-    ['REPEAT', 'k_reputation_to_repeat', 0.01, 'Репутация→repeat'],
-
-    ['STATE_DYN', 'training_quality_effect_coef', 0.00002, 'Обучение→качество'],
-    ['STATE_DYN', 'training_effect_cap', 5, 'Кэп эффекта обучения'],
-    ['STATE_DYN', 'k_loyalty_to_quality', 0.03, 'Лояльность→качество'],
-    ['STATE_DYN', 'burnout_quality_penalty_coef', 0.15, 'Выгорание штраф качество'],
-    ['STATE_DYN', 'quality_reputation_bonus_coef', 0.05, 'Качество→репутация'],
-    ['STATE_DYN', 'aggressive_sales_reputation_penalty', 0.08, 'Агресс. продажи штраф'],
-    ['STATE_DYN', 'stability_bonus', 0, 'Автономный бонус стабильности лояльности'],
-    ['STATE_DYN', 'fire_loyalty_penalty', 10, 'Увольнения штраф лояльности'],
-    ['STATE_DYN', 'loyalty_growth_cap', 10, 'Ограничение роста лояльности за ход'],
-    ['STATE_DYN', 'staff_comfort_burnout_relief_coef', 0.03, 'Комфорт персонала снижает выгорание'],
-    ['STATE_DYN', 'kitchen_burnout_relief_coef', 0.02, 'Кухня снижает выгорание'],
-    ['STATE_DYN', 'burnout_growth_medium', 1, 'Рост выгорания при средней нагрузке'],
-    ['STATE_DYN', 'burnout_growth_high', 3, 'Рост выгорания при высокой нагрузке'],
-    ['STATE_DYN', 'burnout_recovery_if_low_load', -2, 'Восстановление при низкой нагрузке']
-  ];
-
-  clearSheetCompletely_(sheet);
-  writeMatrixToSheet_(sheet, 1, 1, rows, 4);
+  writeMatrixToSheet_(sheet, lastRow + 1, 1, missingRows, 4);
   formatSimpleSheet_(sheet, 4);
 }
 
