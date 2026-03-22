@@ -46,6 +46,12 @@ const REQUIRED_TECH_PARAMETER_CODES = [
   'doctor_salary_month',
   'base_admin_cost',
   'start_cash_balance',
+  'reputation_start',
+  'quality_start',
+  'burnout_start',
+  'loyalty_start',
+  'patient_base_start',
+  'market_share_start',
   'stability_bonus',
   'market_pressure_retention',
   'market_pressure_units_start',
@@ -73,6 +79,12 @@ const TECH_PARAMETER_DEFAULT_ROWS = [
 
   ['STATE', 'state_min', 0, 'Мин hidden state'],
   ['STATE', 'state_max', 100, 'Макс hidden state'],
+  ['STATE_START', 'reputation_start', 50, 'Стартовая репутация'],
+  ['STATE_START', 'quality_start', 50, 'Стартовое качество'],
+  ['STATE_START', 'burnout_start', 20, 'Стартовое выгорание'],
+  ['STATE_START', 'loyalty_start', 50, 'Стартовая лояльность'],
+  ['STATE_START', 'patient_base_start', 200, 'Стартовая база пациентов'],
+  ['STATE_START', 'market_share_start', 0.05, 'Стартовая доля рынка'],
 
   ['MODEL', 'alpha', 1.2, 'CPL alpha'],
   ['MODEL', 'beta', 2, 'CPL beta'],
@@ -448,6 +460,7 @@ function deriveInitialSessionValues_(setup, tech) {
 }
 
 function writeSessionConfigSheet_(sheet, setup, derived, tech, cfg) {
+  const initialState = buildInitialStateConfig_(tech);
   const rows = [
     ['block', 'parameter_code', 'value', 'comment'],
     ['SESSION', 'team_id', cfg.teamId, 'ID команды'],
@@ -493,7 +506,14 @@ function writeSessionConfigSheet_(sheet, setup, derived, tech, cfg) {
     ['FINANCE', 'base_cpl', getRequiredNumber_(tech, 'base_cpl', 'TECH_PARAMETERS'), 'Базовый CPL'],
     ['FINANCE', 'base_rent_month', getRequiredNumber_(tech, 'base_rent_month', 'TECH_PARAMETERS'), 'Базовая аренда в месяц'],
     ['FINANCE', 'doctor_salary_month', getRequiredNumber_(tech, 'doctor_salary_month', 'TECH_PARAMETERS'), 'Зарплата врача в месяц'],
-    ['FINANCE', 'base_admin_cost', getRequiredNumber_(tech, 'base_admin_cost', 'TECH_PARAMETERS'), 'Базовые административные расходы']
+    ['FINANCE', 'base_admin_cost', getRequiredNumber_(tech, 'base_admin_cost', 'TECH_PARAMETERS'), 'Базовые административные расходы'],
+
+    ['INITIAL_STATE', 'reputation_start', initialState.reputation_start, 'Baseline репутации для сессии'],
+    ['INITIAL_STATE', 'quality_start', initialState.quality_start, 'Baseline качества для сессии'],
+    ['INITIAL_STATE', 'burnout_start', initialState.burnout_start, 'Baseline выгорания для сессии'],
+    ['INITIAL_STATE', 'loyalty_start', initialState.loyalty_start, 'Baseline лояльности для сессии'],
+    ['INITIAL_STATE', 'patient_base_start', initialState.patient_base_start, 'Baseline базы пациентов для сессии'],
+    ['INITIAL_STATE', 'market_share_start', initialState.market_share_start, 'Baseline доли рынка для сессии']
   ];
 
   writeMatrixToSheet_(sheet, 1, 1, rows, 4);
@@ -502,16 +522,17 @@ function writeSessionConfigSheet_(sheet, setup, derived, tech, cfg) {
 
 function writeTeamStateSheet_(sheet, setup, derived, tech, runtimeTeamIdentity) {
   const headers = getTeamStateHeaders_();
+  const initialState = buildInitialStateConfig_(tech);
   const row = [
     0,
     runtimeTeamIdentity.team_id,
     runtimeTeamIdentity.team_name,
-    getNumberOrDefault_(tech, 'reputation_start', 50),
-    getNumberOrDefault_(tech, 'quality_start', 50),
-    getNumberOrDefault_(tech, 'burnout_start', 20),
-    getNumberOrDefault_(tech, 'loyalty_start', 50),
-    getNumberOrDefault_(tech, 'patient_base_start', 200),
-    getNumberOrDefault_(tech, 'market_share_start', 0.05),
+    initialState.reputation_start,
+    initialState.quality_start,
+    initialState.burnout_start,
+    initialState.loyalty_start,
+    initialState.patient_base_start,
+    initialState.market_share_start,
     getNumberOrDefault_(tech, 'market_pressure_units_start', 0),
     Number(tech.start_cash_balance),
     Number(derived.doctors_current),
@@ -751,6 +772,11 @@ function calculateMonthRound_(ctx) {
 
   const stateMin = getNumberOrDefault_(tech, 'state_min', 0);
   const stateMax = getNumberOrDefault_(tech, 'state_max', 100);
+  const stateHalfRange = getStateHalfRange_(stateMin, stateMax);
+  const reputationStart = getRequiredNumber_(sessionConfig, 'reputation_start', 'SESSION_CONFIG');
+  const qualityStart = getRequiredNumber_(sessionConfig, 'quality_start', 'SESSION_CONFIG');
+  const burnoutStart = getRequiredNumber_(sessionConfig, 'burnout_start', 'SESSION_CONFIG');
+  const loyaltyStart = getRequiredNumber_(sessionConfig, 'loyalty_start', 'SESSION_CONFIG');
 
   const alpha = getRequiredNumber_(tech, 'alpha', 'TECH_PARAMETERS');
   const beta = getRequiredNumber_(tech, 'beta', 'TECH_PARAMETERS');
@@ -822,11 +848,11 @@ function calculateMonthRound_(ctx) {
     : 0;
   const marketPressureUnitsNext = marketPressureUnits * marketPressureRetention + adsToMarketPressure * adLeads;
 
-  const organicFactorReputation = Math.max(0, 1 + kReputationToOrganic * ((reputation - 50) / 50));
+  const organicFactorReputation = Math.max(0, 1 + kReputationToOrganic * getStateDeviation_(reputation, reputationStart, stateHalfRange));
   const organicFactorLocation = Math.max(0, 1 + kLocationToOrganic * ((locationScore - 50) / 50));
   const organicLeads = envBaseOrganic * organicFactorReputation * organicFactorLocation;
 
-  const repeatRateRaw = baseRepeatRate + kReputationToRepeat * ((reputation - 50) / 50);
+  const repeatRateRaw = baseRepeatRate + kReputationToRepeat * getStateDeviation_(reputation, reputationStart, stateHalfRange);
   const repeatRate = clamp_(repeatRateRaw, 0, repeatRateMax);
   const repeatLeads = patientBase * repeatRate;
 
@@ -893,14 +919,14 @@ function calculateMonthRound_(ctx) {
   const loyaltyNext = clamp_(Math.min(loyaltyRaw, loyaltyMaxStep), stateMin, stateMax);
 
   const qualityNext = clamp_(
-    quality + loyalty * kLoyaltyToQuality + trainingEffect - burnout * burnoutQualityPenaltyCoef,
+    quality + (loyalty - loyaltyStart) * kLoyaltyToQuality + trainingEffect - (burnout - burnoutStart) * burnoutQualityPenaltyCoef,
     stateMin,
     stateMax
   );
 
   const pressurePenalty = pressureIndex * aggressiveSalesReputationPenalty;
   const reputationNext = clamp_(
-    reputation + qualityNext * qualityReputationBonusCoef - pressurePenalty,
+    reputation + (qualityNext - qualityStart) * qualityReputationBonusCoef - pressurePenalty,
     stateMin,
     stateMax
   );
@@ -1092,6 +1118,32 @@ function appendTeamState_(sheet, calc, runtimeTeamIdentity) {
 
   appendNormalizedRow_(sheet, row, getTeamStateHeaders_().length);
   formatSimpleSheet_(sheet, getTeamStateHeaders_().length);
+}
+
+function buildInitialStateConfig_(tech) {
+  return {
+    reputation_start: getRequiredNumber_(tech, 'reputation_start', 'TECH_PARAMETERS'),
+    quality_start: getRequiredNumber_(tech, 'quality_start', 'TECH_PARAMETERS'),
+    burnout_start: getRequiredNumber_(tech, 'burnout_start', 'TECH_PARAMETERS'),
+    loyalty_start: getRequiredNumber_(tech, 'loyalty_start', 'TECH_PARAMETERS'),
+    patient_base_start: getRequiredNumber_(tech, 'patient_base_start', 'TECH_PARAMETERS'),
+    market_share_start: getRequiredNumber_(tech, 'market_share_start', 'TECH_PARAMETERS')
+  };
+}
+
+function getStateHalfRange_(stateMin, stateMax) {
+  const stateHalfRange = (stateMax - stateMin) / 2;
+  if (stateHalfRange <= 0) {
+    throw new Error('Диапазон hidden state некорректен: (state_max - state_min) / 2 должен быть > 0.');
+  }
+  return stateHalfRange;
+}
+
+function getStateDeviation_(value, startValue, stateHalfRange) {
+  if (stateHalfRange <= 0) {
+    throw new Error('stateHalfRange должен быть > 0.');
+  }
+  return (value - startValue) / stateHalfRange;
 }
 
 function ensureRoundResultsHeaders_(sheet) {
