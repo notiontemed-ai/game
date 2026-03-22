@@ -916,21 +916,24 @@ function calculateMonthRound_(ctx) {
   const loyaltyMaxStep = loyalty + Math.max(0, loyaltyGrowthCap);
   const loyaltyNext = clamp_(Math.min(loyaltyRaw, loyaltyMaxStep), stateMin, stateMax);
 
-  const qualityNext = clamp_(
-    quality + (loyalty - loyaltyStart) * kLoyaltyToQuality + trainingEffect - (burnout - burnoutStart) * burnoutQualityPenaltyCoef,
-    stateMin,
-    stateMax
-  );
-
-  const pressurePenalty = pressureIndex * aggressiveSalesReputationPenalty;
-  const reputationNext = clamp_(
-    reputation + (qualityNext - qualityStart) * qualityReputationBonusCoef - pressurePenalty,
-    stateMin,
-    stateMax
-  );
-
   const burnoutNext = clamp_(
     burnout + burnoutGrowth - staffComfort * staffComfortBurnoutReliefCoef - kitchenScore * kitchenBurnoutReliefCoef,
+    stateMin,
+    stateMax
+  );
+
+  const loyaltyDelta = loyaltyNext - loyaltyStart;
+  const burnoutDelta = burnoutNext - burnoutStart;
+  const qualityNext = clamp_(
+    qualityStart + loyaltyDelta * kLoyaltyToQuality + trainingEffect - burnoutDelta * burnoutQualityPenaltyCoef,
+    stateMin,
+    stateMax
+  );
+
+  const qualityGain = qualityNext - qualityStart;
+  const pressurePenalty = pressureIndex * aggressiveSalesReputationPenalty;
+  const reputationNext = clamp_(
+    reputationStart + qualityGain * qualityReputationBonusCoef - pressurePenalty,
     stateMin,
     stateMax
   );
