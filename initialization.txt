@@ -27,7 +27,7 @@ const INITIALIZATION_CONFIG = {
 };
 
 
-function onOpenInitialization_() {
+function onOpenInitialization() {
   SpreadsheetApp.getUi()
     .createMenu('Clinic Game Session')
     .addItem('Create new game session from catalog', 'createNewGameSessionFromCatalog')
