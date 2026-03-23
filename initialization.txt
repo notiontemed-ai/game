@@ -71,7 +71,7 @@ const REQUIRED_COEFFICIENT_CODES = [
 ];
 
 
-function onOpenInitialization() {
+function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('Clinic Game Session')
     .addItem('Create new game session from catalog', 'createNewGameSessionFromCatalog')
