@@ -144,7 +144,7 @@ const TECH_PARAMETER_DEFAULT_ROWS = [
 function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('Clinic Game Session')
-      .addItem('Sync START_SETUP with lot catalog', 'syncStartSetupWithLotCatalog')
+    .addItem('Sync START_SETUP with lot catalog', 'syncStartSetupWithLotCatalog')
     .addItem('Initialize session from START_SETUP', 'initializeSessionFromStartSetup')
     .addItem('Prepare ROUND_INPUT for next month', 'prepareRoundInputForNextMonth')
     .addItem('Run next month round', 'runNextMonthRound')
