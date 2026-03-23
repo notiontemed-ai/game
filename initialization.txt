@@ -61,7 +61,13 @@ const REQUIRED_COEFFICIENT_CODES = [
   'k_competition_to_market_price',
   'market_price_index_min',
   'market_price_index_max',
-  'k_price_deviation_to_conversion'
+  'k_price_deviation_to_conversion',
+  'training_share_floor',
+  'training_share_neutral',
+  'training_share_ceiling',
+  'training_quality_effect_min',
+  'training_quality_effect_neutral',
+  'training_quality_effect_max'
 ];
 
 
@@ -467,6 +473,13 @@ function buildTechMasterRegistryRows_(ss) {
     ['MODEL','base_treatment_conversion', pickRequiredCoeff('base_treatment_conversion'), 'Required from 08_Coefficients'],
     ['MODEL','base_repeat_rate', pickRequiredCoeff('base_repeat_rate'), 'Required from 08_Coefficients'],
 
+    ['STATE_DYN','training_share_floor', pickRequiredCoeff('training_share_floor'), 'Required from 08_Coefficients'],
+    ['STATE_DYN','training_share_neutral', pickRequiredCoeff('training_share_neutral'), 'Required from 08_Coefficients'],
+    ['STATE_DYN','training_share_ceiling', pickRequiredCoeff('training_share_ceiling'), 'Required from 08_Coefficients'],
+    ['STATE_DYN','training_quality_effect_min', pickRequiredCoeff('training_quality_effect_min'), 'Required from 08_Coefficients'],
+    ['STATE_DYN','training_quality_effect_neutral', pickRequiredCoeff('training_quality_effect_neutral'), 'Required from 08_Coefficients'],
+    ['STATE_DYN','training_quality_effect_max', pickRequiredCoeff('training_quality_effect_max'), 'Required from 08_Coefficients'],
+
     ['STATE_START','reputation_start', pickHidden(['reputation_start','reputation'], 50), 'Imported from 05_HiddenState / Стартовые значения'],
     ['STATE_START','quality_start', pickHidden(['quality_start','quality'], 50), 'Imported from 05_HiddenState / Стартовые значения'],
     ['STATE_START','burnout_start', pickHidden(['burnout_start','burnout'], 20), 'Imported from 05_HiddenState / Стартовые значения'],
@@ -477,7 +490,7 @@ function buildTechMasterRegistryRows_(ss) {
 
 
   const requestedCoeffKeys = [
-    'k_reputation_to_repeat','training_quality_effect_coef','training_effect_cap',
+    'k_reputation_to_repeat',
     'burnout_quality_penalty_coef','staff_comfort_burnout_relief_coef','kitchen_burnout_relief_coef',
     'quality_reputation_bonus_coef','aggressive_sales_reputation_penalty',
     'quality_loyalty_bonus_coef','service_loyalty_bonus_coef','reputation_loyalty_bonus_coef','stability_bonus','fire_loyalty_penalty',

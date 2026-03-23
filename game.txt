@@ -60,7 +60,13 @@ const REQUIRED_TECH_PARAMETER_CODES = [
   'k_competition_to_market_price',
   'market_price_index_min',
   'market_price_index_max',
-  'k_price_deviation_to_conversion'
+  'k_price_deviation_to_conversion',
+  'training_share_floor',
+  'training_share_neutral',
+  'training_share_ceiling',
+  'training_quality_effect_min',
+  'training_quality_effect_neutral',
+  'training_quality_effect_max'
 ];
 
 const TECH_PARAMETER_DEFAULT_ROWS = [
@@ -112,8 +118,12 @@ const TECH_PARAMETER_DEFAULT_ROWS = [
   ['REPEAT', 'repeat_rate_max', 0.5, 'Макс repeat'],
   ['REPEAT', 'k_reputation_to_repeat', 0.01, 'Репутация→repeat'],
 
-  ['STATE_DYN', 'training_quality_effect_coef', 0.00002, 'Обучение→качество'],
-  ['STATE_DYN', 'training_effect_cap', 5, 'Кэп эффекта обучения'],
+  ['STATE_DYN', 'training_share_floor', 0, 'Нижняя граница доли обучения'],
+  ['STATE_DYN', 'training_share_neutral', 0.1, 'Нейтральная доля обучения'],
+  ['STATE_DYN', 'training_share_ceiling', 0.2, 'Верхняя граница доли обучения'],
+  ['STATE_DYN', 'training_quality_effect_min', -5, 'Мин. эффект обучения на качество'],
+  ['STATE_DYN', 'training_quality_effect_neutral', 0, 'Нейтральный эффект обучения на качество'],
+  ['STATE_DYN', 'training_quality_effect_max', 5, 'Макс. эффект обучения на качество'],
   ['STATE_DYN', 'k_loyalty_to_quality', 0.03, 'Лояльность→качество'],
   ['STATE_DYN', 'burnout_quality_penalty_coef', 0.15, 'Выгорание штраф качество'],
   ['STATE_DYN', 'quality_reputation_bonus_coef', 0.05, 'Качество→репутация'],
@@ -615,6 +625,7 @@ function writeTeamStateSheet_(sheet, setup, derived, tech, runtimeTeamIdentity) 
     initialState.patient_base_start,
     initialState.market_share_start,
     getNumberOrDefault_(tech, 'market_pressure_units_start', 0),
+    0,
     Number(tech.start_cash_balance),
     Number(derived.doctors_current),
     Number(derived.visit_rooms),
@@ -678,6 +689,8 @@ function writeRoundResultsBaseline_(sheet, setup, derived, tech, sessionConfig, 
     marketContext.market_avg_procedure_price,
     1,
     1,
+    0,
+    0,
     0,
     0,
     0,
@@ -834,6 +847,7 @@ function calculateMonthRound_(ctx) {
   const marketSharePrev = Number(prev.market_share);
   const marketPressureUnits = Number(prev.market_pressure_units || 0);
   const cashBalanceCurrent = Number(prev.cash_balance);
+  const trainingQualityPenaltyStockCurrent = Number(prev.training_quality_penalty_stock || 0);
   const doctorsCurrent = Number(prev.doctors_current);
   const visitRooms = Number(prev.visit_rooms);
   const ftlRooms = Number(prev.ftl_rooms);
@@ -895,8 +909,12 @@ function calculateMonthRound_(ctx) {
   const kReputationToRepeat = getRequiredNumber_(tech, 'k_reputation_to_repeat', 'TECH_PARAMETERS');
   const repeatRateMax = getRequiredNumber_(tech, 'repeat_rate_max', 'TECH_PARAMETERS');
 
-  const trainingQualityEffectCoef = getNumberOrDefault_(tech, 'training_quality_effect_coef', 0.00002);
-  const trainingEffectCap = getNumberOrDefault_(tech, 'training_effect_cap', 5);
+  const trainingShareFloor = getNumberOrDefault_(tech, 'training_share_floor', 0);
+  const trainingShareNeutral = getNumberOrDefault_(tech, 'training_share_neutral', 0.1);
+  const trainingShareCeiling = getNumberOrDefault_(tech, 'training_share_ceiling', 0.2);
+  const trainingQualityEffectMin = getNumberOrDefault_(tech, 'training_quality_effect_min', -5);
+  const trainingQualityEffectNeutral = getNumberOrDefault_(tech, 'training_quality_effect_neutral', 0);
+  const trainingQualityEffectMax = getNumberOrDefault_(tech, 'training_quality_effect_max', 5);
   const burnoutQualityPenaltyCoef = getNumberOrDefault_(tech, 'burnout_quality_penalty_coef', 0.15);
   const kLoyaltyToQuality = getRequiredNumber_(tech, 'k_loyalty_to_quality', 'TECH_PARAMETERS');
   const qualityReputationBonusCoef = getRequiredNumber_(tech, 'quality_reputation_bonus_coef', 'TECH_PARAMETERS');
@@ -1011,7 +1029,20 @@ function calculateMonthRound_(ctx) {
   else if (avgLoadActual < 0.9) burnoutGrowth = burnoutGrowthMedium;
   else burnoutGrowth = burnoutGrowthHigh;
 
-  const trainingEffect = Math.min(trainingBudget * trainingQualityEffectCoef, trainingEffectCap);
+  const doctorPayrollT = doctorCost;
+  const trainingShare = doctorPayrollT <= 0 ? 0 : trainingBudget / doctorPayrollT;
+  const trainingEffectMonth = calculateTrainingEffectMonth_(
+    trainingShare,
+    trainingShareFloor,
+    trainingShareNeutral,
+    trainingShareCeiling,
+    trainingQualityEffectMin,
+    trainingQualityEffectNeutral,
+    trainingQualityEffectMax
+  );
+  const trainingPositiveMonth = Math.max(trainingEffectMonth, 0);
+  const trainingNegativeMonth = Math.min(trainingEffectMonth, 0);
+  const trainingQualityPenaltyStockNext = trainingQualityPenaltyStockCurrent + trainingNegativeMonth;
 
   const comfortBonus = staffComfort / 20;
   const loyaltyRaw = loyalty + stabilityBonus + comfortBonus - fireCount * fireLoyaltyPenalty;
@@ -1027,7 +1058,7 @@ function calculateMonthRound_(ctx) {
   const loyaltyDelta = loyaltyNext - loyaltyStart;
   const burnoutDelta = burnoutNext - burnoutStart;
   const qualityNext = clamp_(
-    qualityStart + loyaltyDelta * kLoyaltyToQuality + trainingEffect - burnoutDelta * burnoutQualityPenaltyCoef,
+    qualityStart + loyaltyDelta * kLoyaltyToQuality + trainingPositiveMonth + trainingQualityPenaltyStockNext - burnoutDelta * burnoutQualityPenaltyCoef,
     stateMin,
     stateMax
   );
@@ -1102,6 +1133,8 @@ function calculateMonthRound_(ctx) {
     total_revenue: totalRevenue,
     rent_month: rentMonth,
     doctor_cost: doctorCost,
+    training_share: trainingShare,
+    training_effect_month: trainingEffectMonth,
     total_cost: totalCost,
     financial_result: financialResult,
     cash_balance_next: cashBalanceNext,
@@ -1112,6 +1145,7 @@ function calculateMonthRound_(ctx) {
     loyalty_next: loyaltyNext,
     patient_base_next: patientBaseNext,
     doctors_next: doctorsNext,
+    training_quality_penalty_stock_next: trainingQualityPenaltyStockNext,
 
     visit_load_actual: visitLoadActual,
     procedure_load_actual: procedureLoadActual,
@@ -1178,6 +1212,8 @@ function appendRoundResult_(sheet, calc, runtimeTeamIdentity) {
     calc.total_revenue,
     calc.rent_month,
     calc.doctor_cost,
+    calc.training_share,
+    calc.training_effect_month,
     calc.total_cost,
     calc.financial_result,
     calc.cash_balance_next,
@@ -1207,6 +1243,7 @@ function appendTeamState_(sheet, calc, runtimeTeamIdentity) {
     calc.patient_base_next,
     calc.market_share,
     calc.market_pressure_units_end,
+    calc.training_quality_penalty_stock_next,
     calc.cash_balance_next,
     calc.doctors_next,
     Number(latestState.visit_rooms),
@@ -1247,6 +1284,23 @@ function getStateDeviation_(value, startValue, stateHalfRange) {
     throw new Error('stateHalfRange должен быть > 0.');
   }
   return (value - startValue) / stateHalfRange;
+}
+
+function calculateTrainingEffectMonth_(share, shareFloor, shareNeutral, shareCeiling, effectMin, effectNeutral, effectMax) {
+  if (shareFloor > shareNeutral || shareNeutral > shareCeiling) {
+    throw new Error('Параметры training_share должны удовлетворять floor <= neutral <= ceiling.');
+  }
+
+  if (share <= shareFloor) return effectMin;
+  if (share >= shareCeiling) return effectMax;
+
+  if (share <= shareNeutral) {
+    if (shareNeutral === shareFloor) return effectNeutral;
+    return effectMin + (effectNeutral - effectMin) * ((share - shareFloor) / (shareNeutral - shareFloor));
+  }
+
+  if (shareCeiling === shareNeutral) return effectMax;
+  return effectNeutral + (effectMax - effectNeutral) * ((share - shareNeutral) / (shareCeiling - shareNeutral));
 }
 
 function ensureRoundResultsHeaders_(sheet) {
@@ -1312,6 +1366,8 @@ function getRoundResultsHeaders_() {
     'total_revenue',
     'rent_month',
     'doctor_cost',
+    'training_share',
+    'training_effect_month',
     'total_cost',
     'financial_result',
     'cash_balance_next',
@@ -1335,6 +1391,7 @@ function getTeamStateHeaders_() {
     'patient_base',
     'market_share',
     'market_pressure_units',
+    'training_quality_penalty_stock',
     'cash_balance',
     'doctors_current',
     'visit_rooms',
