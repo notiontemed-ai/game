@@ -349,15 +349,14 @@ function ensureStartSetupTemplateForInit_(sheet, sourceMarkerText) {
   const bodyRows = [
     ['TEAM','team_name','Название команды','Main Team','Ручной ввод','player','Идентификация команды'],
     ['LOT','selected_lot_id','ID выбранного лота','LOT_01','Ручной ввод','player','Выбор помещения'],
-    ['LOT','selected_lot_name','Название лота','=IFERROR(VLOOKUP($D$3;12_LotList!$A:$J;2;FALSE);"")','Формула из 12_LotList','formula','Авто из каталога'],
-    ['LOT','selected_total_cabinets','Всего кабинетов','=IFERROR(VLOOKUP($D$3;12_LotList!$A:$J;3;FALSE);"")','Формула из 12_LotList','formula','Авто из каталога'],
-    ['LOT','selected_rent_coef','Коэф. аренды','=IFERROR(VLOOKUP($D$3;12_LotList!$A:$J;4;FALSE);"")','Формула из 12_LotList','formula','Авто из каталога'],
-    ['LOT','selected_location_score','Сила локации','=IFERROR(VLOOKUP($D$3;12_LotList!$A:$J;5;FALSE);"")','Формула из 12_LotList','formula','Авто из каталога'],
-    ['LOT','selected_building_score','Качество здания','=IFERROR(VLOOKUP($D$3;12_LotList!$A:$J;6;FALSE);"")','Формула из 12_LotList','formula','Авто из каталога'],
-    ['LOT','selected_parking_score','Парковка','=IFERROR(VLOOKUP($D$3;12_LotList!$A:$J;7;FALSE);"")','Формула из 12_LotList','formula','Авто из каталога'],
-    ['LOT','selected_staff_comfort','Комфорт персонала','=IFERROR(VLOOKUP($D$3;12_LotList!$A:$J;8;FALSE);"")','Формула из 12_LotList','formula','Авто из каталога'],
-    ['LOT','selected_reception_score','Ресепшн','=IFERROR(VLOOKUP($D$3;12_LotList!$A:$J;9;FALSE);"")','Формула из 12_LotList','formula','Авто из каталога'],
-    ['LOT','selected_kitchen_score','Бытовой комфорт','=IFERROR(VLOOKUP($D$3;12_LotList!$A:$J;10;FALSE);"")','Формула из 12_LotList','formula','Авто из каталога'],
+    ['LOT','selected_lot_name','Название лота','=IFERROR(VLOOKUP($D$3;12_LotList!$A:$I;2;FALSE);"")','Формула из 12_LotList','formula','Авто из каталога'],
+    ['LOT','selected_total_cabinets','Всего кабинетов','=IFERROR(VLOOKUP($D$3;12_LotList!$A:$I;3;FALSE);"")','Формула из 12_LotList','formula','Авто из каталога'],
+    ['LOT','selected_rent_coef','Коэф. аренды','=IFERROR(VLOOKUP($D$3;12_LotList!$A:$I;4;FALSE);"")','Формула из 12_LotList','formula','Авто из каталога'],
+    ['LOT','selected_location_score','Сила локации','=IFERROR(VLOOKUP($D$3;12_LotList!$A:$I;5;FALSE);"")','Формула из 12_LotList','formula','Авто из каталога'],
+    ['LOT','selected_building_score','Качество здания','=IFERROR(VLOOKUP($D$3;12_LotList!$A:$I;6;FALSE);"")','Формула из 12_LotList','formula','Авто из каталога'],
+    ['LOT','selected_parking_score','Парковка','=IFERROR(VLOOKUP($D$3;12_LotList!$A:$I;7;FALSE);"")','Формула из 12_LotList','formula','Авто из каталога'],
+    ['LOT','selected_staff_comfort','Комфорт персонала','=IFERROR(VLOOKUP($D$3;12_LotList!$A:$I;8;FALSE);"")','Формула из 12_LotList','formula','Авто из каталога'],
+    ['LOT','selected_reception_score','Ресепшн','=IFERROR(VLOOKUP($D$3;12_LotList!$A:$I;9;FALSE);"")','Формула из 12_LotList','formula','Авто из каталога'],
     ['ROOMS','visit_rooms','Приемные кабинеты',0,'Ручной ввод','player','visit_rooms + ftl_rooms = total'],
     ['ROOMS','ftl_rooms','ФТЛ кабинеты',0,'Ручной ввод','player','visit_rooms + ftl_rooms = total'],
     ['HR','doctors_start','Врачей на старте',0,'Ручной ввод','player','<= total_cabinets*2'],
@@ -377,7 +376,7 @@ function ensureStartSetupTemplateForInit_(sheet, sourceMarkerText) {
     ensureStartSetupRowsPresent_(sheet, bodyRows);
   }
 
-  for (let r = 4; r <= 11; r++) {
+  for (let r = 4; r <= 10; r++) {
     const f = bodyRows[r - 2][3];
     sheet.getRange(r,4).setFormula(f);
   }
@@ -402,8 +401,8 @@ function ensureLotListTemplateForInit_(sheet) {
   if (sheet.getLastRow() > 1) return;
 
   const rows = [
-    ['lot_id', 'lot_name', 'total_cabinets', 'rent_coef', 'location_score', 'building_score', 'parking_score', 'staff_comfort', 'reception_score', 'kitchen_score'],
-    ['LOT_01', 'Default Lot', 10, 1, 50, 50, 50, 50, 50, 50]
+    ['lot_id', 'lot_name', 'total_cabinets', 'rent_coef', 'location_score', 'building_score', 'parking_score', 'staff_comfort', 'reception_score'],
+    ['LOT_01', 'Default Lot', 10, 1, 50, 50, 50, 50, 50]
   ];
 
   sheet.clear();
@@ -491,7 +490,7 @@ function buildTechMasterRegistryRows_(ss) {
 
   const requestedCoeffKeys = [
     'k_reputation_to_repeat',
-    'burnout_quality_penalty_coef','staff_comfort_burnout_relief_coef','kitchen_burnout_relief_coef',
+    'burnout_quality_penalty_coef','staff_comfort_burnout_relief_coef',
     'quality_reputation_bonus_coef','aggressive_sales_reputation_penalty',
     'quality_loyalty_bonus_coef','service_loyalty_bonus_coef','reputation_loyalty_bonus_coef','stability_bonus','fire_loyalty_penalty',
     'market_pressure_retention','market_pressure_units_start','k_ads_to_market_pressure',
