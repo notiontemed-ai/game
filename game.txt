@@ -1021,8 +1021,8 @@ function calculateMonthRound_(ctx) {
   else if (procedureCapacityLimited > 0) avgLoadActual = procedureLoadActual;
 
   let burnoutGrowth = 0;
-  if (avgLoadActual < 0.8) burnoutGrowth = burnoutRecoveryIfLowLoad;
-  else if (avgLoadActual < 0.9) burnoutGrowth = burnoutGrowthMedium;
+  if (avgLoadActual < 0.6) burnoutGrowth = burnoutRecoveryIfLowLoad;
+  else if (avgLoadActual < 0.8) burnoutGrowth = burnoutGrowthMedium;
   else burnoutGrowth = burnoutGrowthHigh;
 
   const doctorPayrollT = doctorCost;
