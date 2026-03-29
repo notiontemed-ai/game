@@ -131,8 +131,7 @@ const TECH_PARAMETER_DEFAULT_ROWS = [
   ['STATE_DYN', 'stability_bonus', 0, 'Автономный бонус стабильности лояльности'],
   ['STATE_DYN', 'fire_loyalty_penalty', 10, 'Увольнения штраф лояльности'],
   ['STATE_DYN', 'loyalty_growth_cap', 10, 'Ограничение роста лояльности за ход'],
-  ['STATE_DYN', 'staff_comfort_burnout_relief_coef', 0.03, 'Комфорт персонала снижает выгорание'],
-  ['STATE_DYN', 'kitchen_burnout_relief_coef', 0.02, 'Кухня снижает выгорание'],
+  ['STATE_DYN', 'staff_comfort_burnout_relief_coef', 0.03, 'Интегральный комфорт среды (включая бытовой) снижает выгорание'],
   ['STATE_DYN', 'burnout_growth_medium', 1, 'Рост выгорания при средней нагрузке'],
   ['STATE_DYN', 'burnout_growth_high', 3, 'Рост выгорания при высокой нагрузке'],
   ['STATE_DYN', 'burnout_recovery_if_low_load', -2, 'Восстановление при низкой нагрузке'],
@@ -483,7 +482,6 @@ function validateStartSetup_(setup) {
     'selected_parking_score',
     'selected_staff_comfort',
     'selected_reception_score',
-    'selected_kitchen_score',
     'visit_rooms',
     'ftl_rooms',
     'doctors_start'
@@ -498,7 +496,7 @@ function validateStartSetup_(setup) {
 
   const numericFields = [
     'selected_total_cabinets', 'selected_rent_coef', 'selected_location_score', 'selected_building_score',
-    'selected_parking_score', 'selected_staff_comfort', 'selected_reception_score', 'selected_kitchen_score',
+    'selected_parking_score', 'selected_staff_comfort', 'selected_reception_score',
     'visit_rooms', 'ftl_rooms', 'doctors_start'
   ];
   Array.prototype.push.apply(numericFields, REQUIRED_START_SETUP_ENV_FIELDS);
@@ -565,9 +563,8 @@ function writeSessionConfigSheet_(sheet, setup, derived, tech, cfg) {
     ['LOT', 'selected_location_score', setup.selected_location_score, 'Сила локации'],
     ['LOT', 'selected_building_score', setup.selected_building_score, 'Качество здания'],
     ['LOT', 'selected_parking_score', setup.selected_parking_score, 'Парковка'],
-    ['LOT', 'selected_staff_comfort', setup.selected_staff_comfort, 'Комфорт персонала'],
+    ['LOT', 'selected_staff_comfort', setup.selected_staff_comfort, 'Интегральный комфорт среды персонала (включая бытовой)'],
     ['LOT', 'selected_reception_score', setup.selected_reception_score, 'Качество фронта'],
-    ['LOT', 'selected_kitchen_score', setup.selected_kitchen_score, 'Бытовой комфорт'],
 
     ['ROOM_SETUP', 'visit_rooms', setup.visit_rooms, 'Приемные кабинеты'],
     ['ROOM_SETUP', 'ftl_rooms', setup.ftl_rooms, 'ФТЛ кабинеты'],
@@ -860,8 +857,8 @@ function calculateMonthRound_(ctx) {
   const marketContext = computeMarketContext_(sessionConfig, tech);
 
   const locationScore = Number(sessionConfig.selected_location_score);
+  // staff_comfort — интегральный показатель условий среды для персонала (в т.ч. бытовых), кухня отдельно не моделируется.
   const staffComfort = Number(sessionConfig.selected_staff_comfort);
-  const kitchenScore = Number(sessionConfig.selected_kitchen_score);
   const rentCoef = Number(sessionConfig.selected_rent_coef);
 
   const visitPrice = Number(inp.visit_price);
@@ -923,7 +920,6 @@ function calculateMonthRound_(ctx) {
   const fireLoyaltyPenalty = getRequiredNumber_(tech, 'fire_loyalty_penalty', 'TECH_PARAMETERS');
   const loyaltyGrowthCap = getNumberOrDefault_(tech, 'loyalty_growth_cap', 10);
   const staffComfortBurnoutReliefCoef = getNumberOrDefault_(tech, 'staff_comfort_burnout_relief_coef', 0.03);
-  const kitchenBurnoutReliefCoef = getNumberOrDefault_(tech, 'kitchen_burnout_relief_coef', 0.02);
   const burnoutGrowthMedium = getNumberOrDefault_(tech, 'burnout_growth_medium', 1);
   const burnoutGrowthHigh = getNumberOrDefault_(tech, 'burnout_growth_high', 3);
   const burnoutRecoveryIfLowLoad = getNumberOrDefault_(tech, 'burnout_recovery_if_low_load', -2);
@@ -1050,7 +1046,7 @@ function calculateMonthRound_(ctx) {
   const loyaltyNext = clamp_(Math.min(loyaltyRaw, loyaltyMaxStep), stateMin, stateMax);
 
   const burnoutNext = clamp_(
-    burnout + burnoutGrowth - staffComfort * staffComfortBurnoutReliefCoef - kitchenScore * kitchenBurnoutReliefCoef,
+    burnout + burnoutGrowth - staffComfort * staffComfortBurnoutReliefCoef,
     stateMin,
     stateMax
   );
