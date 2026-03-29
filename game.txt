@@ -837,9 +837,9 @@ function calculateMonthRound_(ctx) {
   const roundNo = Number(inp.round_no);
 
   const reputationPrev = Number(prev.reputation);
-  const quality = Number(prev.quality);
-  const burnout = Number(prev.burnout);
-  const loyalty = Number(prev.loyalty);
+  const qualityPrev = Number(prev.quality);
+  const burnoutPrev = Number(prev.burnout);
+  const loyaltyPrev = Number(prev.loyalty);
   const patientBase = Number(prev.patient_base);
   const marketSharePrev = Number(prev.market_share);
   const marketPressureUnits = Number(prev.market_pressure_units || 0);
@@ -885,9 +885,6 @@ function calculateMonthRound_(ctx) {
   const stateMax = getNumberOrDefault_(tech, 'state_max', 100);
   const stateHalfRange = getStateHalfRange_(stateMin, stateMax);
   const reputationBaseline = getRequiredNumber_(sessionConfig, 'reputation_start', 'SESSION_CONFIG');
-  const qualityStart = getRequiredNumber_(sessionConfig, 'quality_start', 'SESSION_CONFIG');
-  const burnoutStart = getRequiredNumber_(sessionConfig, 'burnout_start', 'SESSION_CONFIG');
-  const loyaltyStart = getRequiredNumber_(sessionConfig, 'loyalty_start', 'SESSION_CONFIG');
 
   const alpha = getRequiredNumber_(tech, 'alpha', 'TECH_PARAMETERS');
   const beta = getRequiredNumber_(tech, 'beta', 'TECH_PARAMETERS');
@@ -1041,28 +1038,31 @@ function calculateMonthRound_(ctx) {
   const trainingQualityPenaltyStockNext = trainingQualityPenaltyStockCurrent + trainingNegativeMonth;
 
   const comfortBonus = staffComfort / 20;
-  const loyaltyRaw = loyalty + stabilityBonus + comfortBonus - fireCount * fireLoyaltyPenalty;
-  const loyaltyMaxStep = loyalty + Math.max(0, loyaltyGrowthCap);
+  const loyaltyRaw = loyaltyPrev + stabilityBonus + comfortBonus - fireCount * fireLoyaltyPenalty;
+  const loyaltyMaxStep = loyaltyPrev + Math.max(0, loyaltyGrowthCap);
   const loyaltyNext = clamp_(Math.min(loyaltyRaw, loyaltyMaxStep), stateMin, stateMax);
 
   const burnoutNext = clamp_(
-    burnout + burnoutGrowth - staffComfort * staffComfortBurnoutReliefCoef,
+    burnoutPrev + burnoutGrowth - staffComfort * staffComfortBurnoutReliefCoef,
     stateMin,
     stateMax
   );
 
-  const loyaltyDelta = loyaltyNext - loyaltyStart;
-  const burnoutDelta = burnoutNext - burnoutStart;
+  const qualityDelta =
+    (loyaltyNext - loyaltyPrev) * kLoyaltyToQuality
+    + trainingPositiveMonth
+    + (trainingQualityPenaltyStockNext - trainingQualityPenaltyStockCurrent)
+    - (burnoutNext - burnoutPrev) * burnoutQualityPenaltyCoef;
   const qualityNext = clamp_(
-    qualityStart + loyaltyDelta * kLoyaltyToQuality + trainingPositiveMonth + trainingQualityPenaltyStockNext - burnoutDelta * burnoutQualityPenaltyCoef,
+    qualityPrev + qualityDelta,
     stateMin,
     stateMax
   );
 
-  const qualityGain = qualityNext - qualityStart;
+  const qualityGain = qualityNext - qualityPrev;
   const pressurePenalty = pressureIndex * aggressiveSalesReputationPenalty;
   const reputationNext = clamp_(
-    reputationBaseline + qualityGain * qualityReputationBonusCoef - pressurePenalty,
+    reputationPrev + qualityGain * qualityReputationBonusCoef - pressurePenalty,
     stateMin,
     stateMax
   );
