@@ -440,6 +440,16 @@ function buildTechMasterRegistryRows_(ss) {
     }
     return d;
   };
+  const pickHiddenRequired = (keys, d, parameterCode) => {
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[i];
+      if (k in hiddenStart && hiddenStart[k] !== '' && hiddenStart[k] !== null && hiddenStart[k] !== undefined) return hiddenStart[k];
+    }
+    throw new Error(
+      `Не найдено стартовое значение для ${parameterCode} в 05_HiddenState (ожидаются коды: ${keys.join(', ')}). ` +
+      `Если продолжить с дефолтом ${d}, возникнет скрытый сдвиг в стартовом состоянии.`
+    );
+  };
 
   const rows = [
     ['block','parameter_code','value','comment'],
@@ -479,7 +489,7 @@ function buildTechMasterRegistryRows_(ss) {
     ['STATE_DYN','training_quality_effect_neutral', pickRequiredCoeff('training_quality_effect_neutral'), 'Required from 08_Coefficients'],
     ['STATE_DYN','training_quality_effect_max', pickRequiredCoeff('training_quality_effect_max'), 'Required from 08_Coefficients'],
 
-    ['STATE_START','reputation_start', pickHidden(['reputation_start','reputation'], 50), 'Imported from 05_HiddenState / Стартовые значения'],
+    ['STATE_START','reputation_start', pickHiddenRequired(['reputation_start','reputation'], 50, 'reputation_start'), 'Imported from 05_HiddenState / Стартовые значения'],
     ['STATE_START','quality_start', pickHidden(['quality_start','quality'], 50), 'Imported from 05_HiddenState / Стартовые значения'],
     ['STATE_START','burnout_start', pickHidden(['burnout_start','burnout'], 20), 'Imported from 05_HiddenState / Стартовые значения'],
     ['STATE_START','loyalty_start', pickHidden(['loyalty_start','loyalty'], 50), 'Imported from 05_HiddenState / Стартовые значения'],
