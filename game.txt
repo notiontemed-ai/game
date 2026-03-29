@@ -836,7 +836,7 @@ function calculateMonthRound_(ctx) {
 
   const roundNo = Number(inp.round_no);
 
-  const reputation = Number(prev.reputation);
+  const reputationPrev = Number(prev.reputation);
   const quality = Number(prev.quality);
   const burnout = Number(prev.burnout);
   const loyalty = Number(prev.loyalty);
@@ -884,7 +884,7 @@ function calculateMonthRound_(ctx) {
   const stateMin = getNumberOrDefault_(tech, 'state_min', 0);
   const stateMax = getNumberOrDefault_(tech, 'state_max', 100);
   const stateHalfRange = getStateHalfRange_(stateMin, stateMax);
-  const reputationStart = getRequiredNumber_(sessionConfig, 'reputation_start', 'SESSION_CONFIG');
+  const reputationBaseline = getRequiredNumber_(sessionConfig, 'reputation_start', 'SESSION_CONFIG');
   const qualityStart = getRequiredNumber_(sessionConfig, 'quality_start', 'SESSION_CONFIG');
   const burnoutStart = getRequiredNumber_(sessionConfig, 'burnout_start', 'SESSION_CONFIG');
   const loyaltyStart = getRequiredNumber_(sessionConfig, 'loyalty_start', 'SESSION_CONFIG');
@@ -962,11 +962,11 @@ function calculateMonthRound_(ctx) {
     : 0;
   const marketPressureUnitsNext = marketPressureUnits * marketPressureRetention + adsToMarketPressure * adLeads;
 
-  const organicFactorReputation = Math.max(0, 1 + kReputationToOrganic * getStateDeviation_(reputation, reputationStart, stateHalfRange));
+  const organicFactorReputation = Math.max(0, 1 + kReputationToOrganic * getStateDeviation_(reputationPrev, reputationBaseline, stateHalfRange));
   const organicFactorLocation = Math.max(0, 1 + kLocationToOrganic * ((locationScore - 50) / 50));
   const organicLeads = envBaseOrganic * organicFactorReputation * organicFactorLocation;
 
-  const repeatRateRaw = baseRepeatRate + kReputationToRepeat * getStateDeviation_(reputation, reputationStart, stateHalfRange);
+  const repeatRateRaw = baseRepeatRate + kReputationToRepeat * getStateDeviation_(reputationPrev, reputationBaseline, stateHalfRange);
   const repeatRate = clamp_(repeatRateRaw, 0, repeatRateMax);
   const repeatLeads = patientBase * repeatRate;
 
@@ -1062,7 +1062,7 @@ function calculateMonthRound_(ctx) {
   const qualityGain = qualityNext - qualityStart;
   const pressurePenalty = pressureIndex * aggressiveSalesReputationPenalty;
   const reputationNext = clamp_(
-    reputationStart + qualityGain * qualityReputationBonusCoef - pressurePenalty,
+    reputationBaseline + qualityGain * qualityReputationBonusCoef - pressurePenalty,
     stateMin,
     stateMax
   );
