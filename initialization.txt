@@ -488,33 +488,18 @@ function buildTechMasterRegistryRows_(ss) {
   ];
 
 
-  const requestedCoeffKeys = [
-    'k_reputation_to_repeat',
-    'burnout_quality_penalty_coef','staff_comfort_burnout_relief_coef',
-    'quality_reputation_bonus_coef','aggressive_sales_reputation_penalty',
-    'quality_loyalty_bonus_coef','service_loyalty_bonus_coef','reputation_loyalty_bonus_coef','stability_bonus','fire_loyalty_penalty',
-    'market_pressure_retention','market_pressure_units_start','k_ads_to_market_pressure',
-    'k_loyalty_to_quality','k_reputation_to_organic','k_location_to_organic',
-    'k_economy_to_market_price','k_competition_to_market_price','market_price_index_min',
-    'market_price_index_max','k_price_deviation_to_conversion'
-  ];
-  requestedCoeffKeys.forEach(k => {
-    if (k in map && map[k] !== '' && map[k] !== null && map[k] !== undefined) {
-      rows.push(['MODEL', k, map[k], 'Imported from 08_Coefficients / Пример значения (input)']);
-    }
-  });
-
-  const excludedAutoK = {
-    k_quality_to_repeat: true,
-    k_service_to_repeat: true,
-    k_loyalty_to_repeat: true
-  };
+  const blockByCode = {};
+  for (let i = 1; i < coeffRows.length; i++) {
+    const code = String(coeffRows[i][1] || '').trim();
+    if (!code) continue;
+    blockByCode[code] = String(coeffRows[i][0] || 'MODEL').trim() || 'MODEL';
+  }
 
   Object.keys(map).sort().forEach(k => {
-    if (!/^k_/.test(k)) return;
-    if (excludedAutoK[k]) return;
+    if (map[k] === '' || map[k] === null || map[k] === undefined) return;
     const exists = rows.some(r => r[1] === k);
-    if (!exists) rows.push(['MODEL', k, map[k], 'Imported k_ coefficient']);
+    if (exists) return;
+    rows.push([blockByCode[k] || 'MODEL', k, map[k], 'Imported from 08_Coefficients / Пример значения (input)']);
   });
 
   return rows;
