@@ -529,7 +529,7 @@ function deriveInitialSessionValues_(setup, tech) {
   const visitRooms = getRequiredNumber_(setup, 'visit_rooms', 'START_SETUP');
   const ftlRooms = getRequiredNumber_(setup, 'ftl_rooms', 'START_SETUP');
   const doctorsStart = getRequiredNumber_(setup, 'doctors_start', 'START_SETUP');
-  const maxDoctorLoadPercent = getNumberOrDefault_(tech, 'max_doctor_load_percent', 90);
+  const maxDoctorLoadPercent = getNumberOrDefault_(tech, 'max_doctor_load_percent', 100);
 
   return {
     total_cabinets: totalCabinets,
