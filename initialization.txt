@@ -67,7 +67,18 @@ const REQUIRED_COEFFICIENT_CODES = [
   'training_share_ceiling',
   'training_quality_effect_min',
   'training_quality_effect_neutral',
-  'training_quality_effect_max'
+  'training_quality_effect_max',
+  'aggressive_sales_threshold_pct',
+  'aggressive_sales_conv_target_pct',
+  'aggressive_sales_conv_cap_pct',
+  'aggressive_sales_conv_gain_at_target_pp',
+  'aggressive_sales_conv_gain_max_pp',
+  'aggressive_sales_rep_soft_pct',
+  'aggressive_sales_rep_mid_pct',
+  'aggressive_sales_rep_cap_pct',
+  'aggressive_sales_rep_penalty_at_soft',
+  'aggressive_sales_rep_penalty_at_mid',
+  'aggressive_sales_rep_penalty_cap'
 ];
 
 
@@ -488,6 +499,17 @@ function buildTechMasterRegistryRows_(ss) {
     ['STATE_DYN','training_quality_effect_min', pickRequiredCoeff('training_quality_effect_min'), 'Required from 08_Coefficients'],
     ['STATE_DYN','training_quality_effect_neutral', pickRequiredCoeff('training_quality_effect_neutral'), 'Required from 08_Coefficients'],
     ['STATE_DYN','training_quality_effect_max', pickRequiredCoeff('training_quality_effect_max'), 'Required from 08_Coefficients'],
+    ['SALES','aggressive_sales_threshold_pct', pickRequiredCoeff('aggressive_sales_threshold_pct'), 'Required from 08_Coefficients'],
+    ['SALES','aggressive_sales_conv_target_pct', pickRequiredCoeff('aggressive_sales_conv_target_pct'), 'Required from 08_Coefficients'],
+    ['SALES','aggressive_sales_conv_cap_pct', pickRequiredCoeff('aggressive_sales_conv_cap_pct'), 'Required from 08_Coefficients'],
+    ['SALES','aggressive_sales_conv_gain_at_target_pp', pickRequiredCoeff('aggressive_sales_conv_gain_at_target_pp'), 'Required from 08_Coefficients'],
+    ['SALES','aggressive_sales_conv_gain_max_pp', pickRequiredCoeff('aggressive_sales_conv_gain_max_pp'), 'Required from 08_Coefficients'],
+    ['SALES','aggressive_sales_rep_soft_pct', pickRequiredCoeff('aggressive_sales_rep_soft_pct'), 'Required from 08_Coefficients'],
+    ['SALES','aggressive_sales_rep_mid_pct', pickRequiredCoeff('aggressive_sales_rep_mid_pct'), 'Required from 08_Coefficients'],
+    ['SALES','aggressive_sales_rep_cap_pct', pickRequiredCoeff('aggressive_sales_rep_cap_pct'), 'Required from 08_Coefficients'],
+    ['SALES','aggressive_sales_rep_penalty_at_soft', pickRequiredCoeff('aggressive_sales_rep_penalty_at_soft'), 'Required from 08_Coefficients'],
+    ['SALES','aggressive_sales_rep_penalty_at_mid', pickRequiredCoeff('aggressive_sales_rep_penalty_at_mid'), 'Required from 08_Coefficients'],
+    ['SALES','aggressive_sales_rep_penalty_cap', pickRequiredCoeff('aggressive_sales_rep_penalty_cap'), 'Required from 08_Coefficients'],
 
     ['STATE_START','reputation_start', pickHiddenRequired(['reputation_start','reputation'], 50, 'reputation_start'), 'Imported from 05_HiddenState / Стартовые значения'],
     ['STATE_START','quality_start', pickHidden(['quality_start','quality'], 50), 'Imported from 05_HiddenState / Стартовые значения'],
@@ -756,6 +778,52 @@ function validateRequiredCoefficientValues_(coefficientMap) {
   const maxValue = getRequiredNumericValue_(coefficientMap, 'market_price_index_max', '08_Coefficients');
   if (minValue > maxValue) {
     throw new Error('В листе 08_Coefficients должно выполняться market_price_index_min <= market_price_index_max.');
+  }
+
+  const aggressiveSalesThresholdPct = getRequiredNumericValue_(coefficientMap, 'aggressive_sales_threshold_pct', '08_Coefficients');
+  const aggressiveSalesConvTargetPct = getRequiredNumericValue_(coefficientMap, 'aggressive_sales_conv_target_pct', '08_Coefficients');
+  const aggressiveSalesConvCapPct = getRequiredNumericValue_(coefficientMap, 'aggressive_sales_conv_cap_pct', '08_Coefficients');
+  const aggressiveSalesRepSoftPct = getRequiredNumericValue_(coefficientMap, 'aggressive_sales_rep_soft_pct', '08_Coefficients');
+  const aggressiveSalesRepMidPct = getRequiredNumericValue_(coefficientMap, 'aggressive_sales_rep_mid_pct', '08_Coefficients');
+  const aggressiveSalesRepCapPct = getRequiredNumericValue_(coefficientMap, 'aggressive_sales_rep_cap_pct', '08_Coefficients');
+  const aggressiveSalesConvGainAtTargetPp = getRequiredNumericValue_(coefficientMap, 'aggressive_sales_conv_gain_at_target_pp', '08_Coefficients');
+  const aggressiveSalesConvGainMaxPp = getRequiredNumericValue_(coefficientMap, 'aggressive_sales_conv_gain_max_pp', '08_Coefficients');
+  const aggressiveSalesRepPenaltyAtSoft = getRequiredNumericValue_(coefficientMap, 'aggressive_sales_rep_penalty_at_soft', '08_Coefficients');
+  const aggressiveSalesRepPenaltyAtMid = getRequiredNumericValue_(coefficientMap, 'aggressive_sales_rep_penalty_at_mid', '08_Coefficients');
+  const aggressiveSalesRepPenaltyCap = getRequiredNumericValue_(coefficientMap, 'aggressive_sales_rep_penalty_cap', '08_Coefficients');
+
+  if (aggressiveSalesThresholdPct < 0) {
+    throw new Error('В листе 08_Coefficients должно выполняться aggressive_sales_threshold_pct >= 0.');
+  }
+  if (aggressiveSalesConvTargetPct <= aggressiveSalesThresholdPct) {
+    throw new Error('В листе 08_Coefficients должно выполняться aggressive_sales_conv_target_pct > aggressive_sales_threshold_pct.');
+  }
+  if (aggressiveSalesConvCapPct <= aggressiveSalesConvTargetPct) {
+    throw new Error('В листе 08_Coefficients должно выполняться aggressive_sales_conv_cap_pct > aggressive_sales_conv_target_pct.');
+  }
+  if (aggressiveSalesRepSoftPct <= aggressiveSalesThresholdPct) {
+    throw new Error('В листе 08_Coefficients должно выполняться aggressive_sales_rep_soft_pct > aggressive_sales_threshold_pct.');
+  }
+  if (aggressiveSalesRepMidPct <= aggressiveSalesRepSoftPct) {
+    throw new Error('В листе 08_Coefficients должно выполняться aggressive_sales_rep_mid_pct > aggressive_sales_rep_soft_pct.');
+  }
+  if (aggressiveSalesRepCapPct <= aggressiveSalesRepMidPct) {
+    throw new Error('В листе 08_Coefficients должно выполняться aggressive_sales_rep_cap_pct > aggressive_sales_rep_mid_pct.');
+  }
+  if (aggressiveSalesConvGainAtTargetPp < 0) {
+    throw new Error('В листе 08_Coefficients должно выполняться aggressive_sales_conv_gain_at_target_pp >= 0.');
+  }
+  if (aggressiveSalesConvGainMaxPp < aggressiveSalesConvGainAtTargetPp) {
+    throw new Error('В листе 08_Coefficients должно выполняться aggressive_sales_conv_gain_max_pp >= aggressive_sales_conv_gain_at_target_pp.');
+  }
+  if (aggressiveSalesRepPenaltyAtSoft < 0) {
+    throw new Error('В листе 08_Coefficients должно выполняться aggressive_sales_rep_penalty_at_soft >= 0.');
+  }
+  if (aggressiveSalesRepPenaltyAtMid < aggressiveSalesRepPenaltyAtSoft) {
+    throw new Error('В листе 08_Coefficients должно выполняться aggressive_sales_rep_penalty_at_mid >= aggressive_sales_rep_penalty_at_soft.');
+  }
+  if (aggressiveSalesRepPenaltyCap < aggressiveSalesRepPenaltyAtMid) {
+    throw new Error('В листе 08_Coefficients должно выполняться aggressive_sales_rep_penalty_cap >= aggressive_sales_rep_penalty_at_mid.');
   }
 }
 
