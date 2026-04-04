@@ -66,7 +66,18 @@ const REQUIRED_TECH_PARAMETER_CODES = [
   'training_share_ceiling',
   'training_quality_effect_min',
   'training_quality_effect_neutral',
-  'training_quality_effect_max'
+  'training_quality_effect_max',
+  'aggressive_sales_threshold_pct',
+  'aggressive_sales_conv_target_pct',
+  'aggressive_sales_conv_cap_pct',
+  'aggressive_sales_conv_gain_at_target_pp',
+  'aggressive_sales_conv_gain_max_pp',
+  'aggressive_sales_rep_soft_pct',
+  'aggressive_sales_rep_mid_pct',
+  'aggressive_sales_rep_cap_pct',
+  'aggressive_sales_rep_penalty_at_soft',
+  'aggressive_sales_rep_penalty_at_mid',
+  'aggressive_sales_rep_penalty_cap'
 ];
 
 const TECH_PARAMETER_DEFAULT_ROWS = [
@@ -112,6 +123,17 @@ const TECH_PARAMETER_DEFAULT_ROWS = [
   ['CONV', 'base_treatment_conversion', 0.35, 'Баз. конверсия в лечение'],
   ['CONV', 'treatment_conversion_min', 0.05, 'Мин конверсия'],
   ['CONV', 'treatment_conversion_max', 0.95, 'Макс конверсия'],
+  ['SALES', 'aggressive_sales_threshold_pct', 3, 'Порог агрессивных продаж, %'],
+  ['SALES', 'aggressive_sales_conv_target_pct', 10, 'Таргет агрессивных продаж, %'],
+  ['SALES', 'aggressive_sales_conv_cap_pct', 40, 'Потолок агрессивных продаж, %'],
+  ['SALES', 'aggressive_sales_conv_gain_at_target_pp', 12, 'Прирост конверсии к target, п.п.'],
+  ['SALES', 'aggressive_sales_conv_gain_max_pp', 25, 'Макс прирост конверсии, п.п.'],
+  ['SALES', 'aggressive_sales_rep_soft_pct', 15, 'Soft-порог репутации, %'],
+  ['SALES', 'aggressive_sales_rep_mid_pct', 30, 'Mid-порог репутации, %'],
+  ['SALES', 'aggressive_sales_rep_cap_pct', 40, 'Cap-порог репутации, %'],
+  ['SALES', 'aggressive_sales_rep_penalty_at_soft', 5, 'Штраф репутации на soft'],
+  ['SALES', 'aggressive_sales_rep_penalty_at_mid', 10, 'Штраф репутации на mid'],
+  ['SALES', 'aggressive_sales_rep_penalty_cap', 15, 'Потолок штрафа репутации'],
 
   ['REPEAT', 'base_repeat_rate', 0.1, 'Базовый repeat'],
   ['REPEAT', 'repeat_rate_min', 0, 'Мин repeat'],
@@ -273,6 +295,9 @@ function prepareRoundInputForNextMonth() {
   const maxLoadDefault = latestRoundResult && Number(latestRoundResult.round_no) >= 1
     ? Number(latestRoundResult.max_doctor_load_percent || 0)
     : getNumberOrDefault_(latestState, 'max_doctor_load_percent', 100);
+  const aggressiveSalesPctDefault = latestRoundResult && Number(latestRoundResult.round_no) >= 1
+    ? Number(latestRoundResult.aggressive_sales_pct || 0)
+    : 0;
 
   const doctorsCurrent = Number(latestState.doctors_current || 0);
   const maxVisitDoctors = Number(latestState.max_visit_doctors || 0);
@@ -309,6 +334,7 @@ function prepareRoundInputForNextMonth() {
     procedure_price: defaultProcedurePrice,
     marketing_budget: getNumberOrDefault_(techParams, 'default_marketing_budget', 0),
     training_budget: getNumberOrDefault_(techParams, 'default_training_budget', 0),
+    aggressive_sales_pct: aggressiveSalesPctDefault,
     hire_count: 0,
     fire_count: 0,
     doctors_visit_assigned: doctorsVisitAssignedDefault,
@@ -684,8 +710,13 @@ function writeRoundResultsBaseline_(sheet, setup, derived, tech, sessionConfig, 
     marketContext.market_avg_procedure_price,
     marketContext.market_avg_visit_price,
     marketContext.market_avg_procedure_price,
+    0,
     1,
     1,
+    0,
+    0,
+    0,
+    0,
     0,
     0,
     0,
@@ -722,7 +753,7 @@ function ensureRoundInputHeaders_(sheet) {
   if (sheet.getLastRow() > 0) return;
   const headers = [
     'round_no', 'team_id', 'team_name', 'visit_price', 'procedure_price',
-    'marketing_budget', 'training_budget', 'hire_count', 'fire_count',
+    'marketing_budget', 'training_budget', 'aggressive_sales_pct', 'hire_count', 'fire_count',
     'doctors_visit_assigned', 'doctors_ftl_assigned', 'max_doctor_load_percent', 'comment'
   ];
   writeMatrixToSheet_(sheet, 1, 1, [headers], headers.length);
@@ -744,10 +775,10 @@ function findRoundInputRow_(sheet, teamId, roundNo) {
 function appendRoundInputRow_(sheet, data) {
   appendNormalizedRow_(sheet, [
     data.round_no, data.team_id, data.team_name, data.visit_price, data.procedure_price,
-    data.marketing_budget, data.training_budget, data.hire_count, data.fire_count,
+    data.marketing_budget, data.training_budget, data.aggressive_sales_pct, data.hire_count, data.fire_count,
     data.doctors_visit_assigned, data.doctors_ftl_assigned, data.max_doctor_load_percent,
     data.comment || ''
-  ], 13);
+  ], 14);
 }
 
 
@@ -760,6 +791,7 @@ function buildRoundInputFromTemplate_(template, runtimeTeamIdentity, roundNo) {
     procedure_price: template.procedure_price,
     marketing_budget: template.marketing_budget,
     training_budget: template.training_budget,
+    aggressive_sales_pct: template.aggressive_sales_pct,
     hire_count: template.hire_count,
     fire_count: template.fire_count,
     doctors_visit_assigned: template.doctors_visit_assigned,
@@ -788,6 +820,9 @@ function readRoundInputForRound_(sheet, teamId, roundNo) {
         procedure_price: parseRequiredNumberValue_(row[h.procedure_price], 'ROUND_INPUT.procedure_price'),
         marketing_budget: parseRequiredNumberValue_(row[h.marketing_budget], 'ROUND_INPUT.marketing_budget'),
         training_budget: parseRequiredNumberValue_(row[h.training_budget], 'ROUND_INPUT.training_budget'),
+        aggressive_sales_pct: h.aggressive_sales_pct !== undefined
+          ? parseRequiredNumberValue_(row[h.aggressive_sales_pct], 'ROUND_INPUT.aggressive_sales_pct')
+          : 0,
         hire_count: parseRequiredNumberValue_(row[h.hire_count], 'ROUND_INPUT.hire_count'),
         fire_count: parseRequiredNumberValue_(row[h.fire_count], 'ROUND_INPUT.fire_count'),
         doctors_visit_assigned: parseRequiredNumberValue_(row[h.doctors_visit_assigned], 'ROUND_INPUT.doctors_visit_assigned'),
@@ -826,6 +861,7 @@ function validateRoundInput_(roundInput, latestState) {
   if (roundInput.max_doctor_load_percent <= 0 || roundInput.max_doctor_load_percent > 100) throw new Error('max_doctor_load_percent должен быть в диапазоне (0; 100].');
   if (roundInput.visit_price < 0 || roundInput.procedure_price < 0) throw new Error('Цены не могут быть отрицательными.');
   if (roundInput.marketing_budget < 0 || roundInput.training_budget < 0) throw new Error('Бюджеты не могут быть отрицательными.');
+  if (roundInput.aggressive_sales_pct < 0 || roundInput.aggressive_sales_pct > 100) throw new Error('aggressive_sales_pct должен быть в диапазоне [0; 100].');
 }
 
 function calculateMonthRound_(ctx) {
@@ -865,6 +901,7 @@ function calculateMonthRound_(ctx) {
   const procedurePrice = Number(inp.procedure_price);
   const marketingBudget = Number(inp.marketing_budget);
   const trainingBudget = Number(inp.training_budget);
+  const aggressiveSalesPct = Number(inp.aggressive_sales_pct);
   const hireCount = Number(inp.hire_count);
   const fireCount = Number(inp.fire_count);
   const doctorsVisitAssigned = Number(inp.doctors_visit_assigned);
@@ -898,6 +935,20 @@ function calculateMonthRound_(ctx) {
   const baseBookingRate = getRequiredNumber_(tech, 'base_booking_rate', 'TECH_PARAMETERS');
   const baseTreatmentConversion = getRequiredNumber_(tech, 'base_treatment_conversion', 'TECH_PARAMETERS');
   const kPriceDeviationToConversion = getRequiredNumber_(tech, 'k_price_deviation_to_conversion', 'TECH_PARAMETERS');
+  const treatmentConversionMin = getNumberOrDefault_(tech, 'treatment_conversion_min', 0);
+  const treatmentConversionMax = getNumberOrDefault_(tech, 'treatment_conversion_max', 1);
+
+  const aggressiveSalesThresholdPct = getRequiredNumber_(tech, 'aggressive_sales_threshold_pct', 'TECH_PARAMETERS');
+  const aggressiveSalesConvTargetPct = getRequiredNumber_(tech, 'aggressive_sales_conv_target_pct', 'TECH_PARAMETERS');
+  const aggressiveSalesConvCapPct = getRequiredNumber_(tech, 'aggressive_sales_conv_cap_pct', 'TECH_PARAMETERS');
+  const aggressiveSalesConvGainAtTargetPp = getRequiredNumber_(tech, 'aggressive_sales_conv_gain_at_target_pp', 'TECH_PARAMETERS');
+  const aggressiveSalesConvGainMaxPp = getRequiredNumber_(tech, 'aggressive_sales_conv_gain_max_pp', 'TECH_PARAMETERS');
+  const aggressiveSalesRepSoftPct = getRequiredNumber_(tech, 'aggressive_sales_rep_soft_pct', 'TECH_PARAMETERS');
+  const aggressiveSalesRepMidPct = getRequiredNumber_(tech, 'aggressive_sales_rep_mid_pct', 'TECH_PARAMETERS');
+  const aggressiveSalesRepCapPct = getRequiredNumber_(tech, 'aggressive_sales_rep_cap_pct', 'TECH_PARAMETERS');
+  const aggressiveSalesRepPenaltyAtSoft = getRequiredNumber_(tech, 'aggressive_sales_rep_penalty_at_soft', 'TECH_PARAMETERS');
+  const aggressiveSalesRepPenaltyAtMid = getRequiredNumber_(tech, 'aggressive_sales_rep_penalty_at_mid', 'TECH_PARAMETERS');
+  const aggressiveSalesRepPenaltyCap = getRequiredNumber_(tech, 'aggressive_sales_rep_penalty_cap', 'TECH_PARAMETERS');
 
   const baseRepeatRate = getRequiredNumber_(tech, 'base_repeat_rate', 'TECH_PARAMETERS');
   const kReputationToRepeat = getRequiredNumber_(tech, 'k_reputation_to_repeat', 'TECH_PARAMETERS');
@@ -912,7 +963,6 @@ function calculateMonthRound_(ctx) {
   const burnoutQualityPenaltyCoef = getNumberOrDefault_(tech, 'burnout_quality_penalty_coef', 0.15);
   const kLoyaltyToQuality = getRequiredNumber_(tech, 'k_loyalty_to_quality', 'TECH_PARAMETERS');
   const qualityReputationBonusCoef = getRequiredNumber_(tech, 'quality_reputation_bonus_coef', 'TECH_PARAMETERS');
-  const aggressiveSalesReputationPenalty = getNumberOrDefault_(tech, 'aggressive_sales_reputation_penalty', 0.08);
   const stabilityBonus = getRequiredNumber_(tech, 'stability_bonus', 'TECH_PARAMETERS');
   const fireLoyaltyPenalty = getRequiredNumber_(tech, 'fire_loyalty_penalty', 'TECH_PARAMETERS');
   const loyaltyGrowthCap = getNumberOrDefault_(tech, 'loyalty_growth_cap', 10);
@@ -920,8 +970,6 @@ function calculateMonthRound_(ctx) {
   const burnoutGrowthMedium = getNumberOrDefault_(tech, 'burnout_growth_medium', 1);
   const burnoutGrowthHigh = getNumberOrDefault_(tech, 'burnout_growth_high', 3);
   const burnoutRecoveryIfLowLoad = getNumberOrDefault_(tech, 'burnout_recovery_if_low_load', -2);
-  const pressureIndex = getNumberOrDefault_(sessionConfig, 'pressure_index', 0);
-
   if (marketPressureRetention < 0 || marketPressureRetention > 1) {
     throw new Error('market_pressure_retention должен быть в диапазоне [0; 1].');
   }
@@ -986,8 +1034,24 @@ function calculateMonthRound_(ctx) {
   const visitsDone = Math.min(bookings, visitCapacityLimited);
 
   const procedurePriceIndex = procedurePrice / marketContext.market_avg_procedure_price;
-  const treatmentConversionRaw = baseTreatmentConversion + kPriceDeviationToConversion * (1 - procedurePriceIndex);
-  const treatmentConversion = clamp_(treatmentConversionRaw, 0, 1);
+  const treatmentConversionBase = clamp_(
+    baseTreatmentConversion + kPriceDeviationToConversion * (1 - procedurePriceIndex),
+    treatmentConversionMin,
+    treatmentConversionMax
+  );
+  const aggressiveSalesConvGainPp = calculateAggressiveSalesConversionGainPp_(
+    aggressiveSalesPct,
+    aggressiveSalesThresholdPct,
+    aggressiveSalesConvTargetPct,
+    aggressiveSalesConvCapPct,
+    aggressiveSalesConvGainAtTargetPp,
+    aggressiveSalesConvGainMaxPp
+  );
+  const treatmentConversion = clamp_(
+    treatmentConversionBase + aggressiveSalesConvGainPp / 100,
+    treatmentConversionMin,
+    treatmentConversionMax
+  );
   const treatmentPatientsPotential = visitsDone * treatmentConversion;
   const treatmentPatients = Math.min(treatmentPatientsPotential, safeDiv_(procedureCapacityLimited, proceduresPerCourse));
   const proceduresDone = treatmentPatients * proceduresPerCourse;
@@ -1001,11 +1065,12 @@ function calculateMonthRound_(ctx) {
 
   const visitRevenue = visitsDone * visitPrice;
   const procedureRevenue = proceduresDone * procedurePrice;
+  const salesBonusCost = procedureRevenue * aggressiveSalesPct / 100;
   const totalRevenue = visitRevenue + procedureRevenue;
 
   const rentMonth = baseRentMonth * rentCoef;
   const doctorCost = doctorsCurrent * doctorSalaryMonth;
-  const totalCost = rentMonth + doctorCost + marketingBudget + trainingBudget + baseAdminCost;
+  const totalCost = rentMonth + doctorCost + marketingBudget + trainingBudget + salesBonusCost + baseAdminCost;
   const financialResult = totalRevenue - totalCost;
   const cashBalanceNext = cashBalanceCurrent + financialResult;
 
@@ -1060,9 +1125,18 @@ function calculateMonthRound_(ctx) {
   );
 
   const qualityGain = qualityNext - qualityPrev;
-  const pressurePenalty = pressureIndex * aggressiveSalesReputationPenalty;
+  const aggressiveSalesRepPenalty = calculateAggressiveSalesReputationPenalty_(
+    aggressiveSalesPct,
+    aggressiveSalesThresholdPct,
+    aggressiveSalesRepSoftPct,
+    aggressiveSalesRepMidPct,
+    aggressiveSalesRepCapPct,
+    aggressiveSalesRepPenaltyAtSoft,
+    aggressiveSalesRepPenaltyAtMid,
+    aggressiveSalesRepPenaltyCap
+  );
   const reputationNext = clamp_(
-    reputationPrev + qualityGain * qualityReputationBonusCoef - pressurePenalty,
+    reputationPrev + qualityGain * qualityReputationBonusCoef - aggressiveSalesRepPenalty,
     stateMin,
     stateMax
   );
@@ -1080,6 +1154,7 @@ function calculateMonthRound_(ctx) {
     team_name: inp.team_name,
     visit_price: visitPrice,
     procedure_price: procedurePrice,
+    aggressive_sales_pct: aggressiveSalesPct,
     marketing_budget: marketingBudget,
     training_budget: trainingBudget,
     hire_count: hireCount,
@@ -1118,6 +1193,8 @@ function calculateMonthRound_(ctx) {
     visits_done: visitsDone,
     new_visits_done: newVisitsDone,
     repeat_visits_done: repeatVisitsDone,
+    treatment_conversion_base: treatmentConversionBase,
+    aggressive_sales_conv_gain_pp: aggressiveSalesConvGainPp,
     treatment_conversion: treatmentConversion,
     treatment_patients: treatmentPatients,
     new_treatment_patients: newTreatmentPatients,
@@ -1131,6 +1208,8 @@ function calculateMonthRound_(ctx) {
     doctor_cost: doctorCost,
     training_share: trainingShare,
     training_effect_month: trainingEffectMonth,
+    aggressive_sales_rep_penalty: aggressiveSalesRepPenalty,
+    sales_bonus_cost: salesBonusCost,
     total_cost: totalCost,
     financial_result: financialResult,
     cash_balance_next: cashBalanceNext,
@@ -1191,6 +1270,7 @@ function appendRoundResult_(sheet, calc, runtimeTeamIdentity) {
     calc.market_avg_procedure_price,
     calc.visit_price,
     calc.procedure_price,
+    calc.aggressive_sales_pct,
     calc.visit_price_index,
     calc.procedure_price_index,
     calc.booking_rate,
@@ -1198,6 +1278,8 @@ function appendRoundResult_(sheet, calc, runtimeTeamIdentity) {
     calc.visits_done,
     calc.new_visits_done,
     calc.repeat_visits_done,
+    calc.treatment_conversion_base,
+    calc.aggressive_sales_conv_gain_pp,
     calc.treatment_conversion,
     calc.treatment_patients,
     calc.new_treatment_patients,
@@ -1210,6 +1292,8 @@ function appendRoundResult_(sheet, calc, runtimeTeamIdentity) {
     calc.doctor_cost,
     calc.training_share,
     calc.training_effect_month,
+    calc.aggressive_sales_rep_penalty,
+    calc.sales_bonus_cost,
     calc.total_cost,
     calc.financial_result,
     calc.cash_balance_next,
@@ -1299,6 +1383,64 @@ function calculateTrainingEffectMonth_(share, shareFloor, shareNeutral, shareCei
   return effectNeutral + (effectMax - effectNeutral) * ((share - shareNeutral) / (shareCeiling - shareNeutral));
 }
 
+function smoothstep_(x) {
+  const t = clamp_(x, 0, 1);
+  return 3 * t * t - 2 * t * t * t;
+}
+
+function calculateAggressiveSalesConversionGainPp_(
+  aggressiveSalesPct,
+  thresholdPct,
+  convTargetPct,
+  convCapPct,
+  convGainAtTargetPp,
+  convGainMaxPp
+) {
+  if (aggressiveSalesPct <= thresholdPct) return 0;
+
+  if (aggressiveSalesPct <= convTargetPct) {
+    const u = (aggressiveSalesPct - thresholdPct) / (convTargetPct - thresholdPct);
+    return convGainAtTargetPp * smoothstep_(u);
+  }
+
+  if (aggressiveSalesPct <= convCapPct) {
+    const v = (aggressiveSalesPct - convTargetPct) / (convCapPct - convTargetPct);
+    return convGainAtTargetPp + (convGainMaxPp - convGainAtTargetPp) * smoothstep_(v);
+  }
+
+  return convGainMaxPp;
+}
+
+function calculateAggressiveSalesReputationPenalty_(
+  aggressiveSalesPct,
+  thresholdPct,
+  repSoftPct,
+  repMidPct,
+  repCapPct,
+  repPenaltyAtSoft,
+  repPenaltyAtMid,
+  repPenaltyCap
+) {
+  if (aggressiveSalesPct <= thresholdPct) return 0;
+
+  if (aggressiveSalesPct <= repSoftPct) {
+    const x = (aggressiveSalesPct - thresholdPct) / (repSoftPct - thresholdPct);
+    return repPenaltyAtSoft * smoothstep_(x);
+  }
+
+  if (aggressiveSalesPct <= repMidPct) {
+    const y = (aggressiveSalesPct - repSoftPct) / (repMidPct - repSoftPct);
+    return repPenaltyAtSoft + (repPenaltyAtMid - repPenaltyAtSoft) * y * y;
+  }
+
+  if (aggressiveSalesPct <= repCapPct) {
+    const z = (aggressiveSalesPct - repMidPct) / (repCapPct - repMidPct);
+    return repPenaltyAtMid + (repPenaltyCap - repPenaltyAtMid) * z * z;
+  }
+
+  return repPenaltyCap;
+}
+
 function ensureRoundResultsHeaders_(sheet) {
   if (sheet.getLastRow() > 0) return;
   const headers = getRoundResultsHeaders_();
@@ -1345,6 +1487,7 @@ function getRoundResultsHeaders_() {
     'market_avg_procedure_price',
     'visit_price',
     'procedure_price',
+    'aggressive_sales_pct',
     'visit_price_index',
     'procedure_price_index',
     'booking_rate',
@@ -1352,6 +1495,8 @@ function getRoundResultsHeaders_() {
     'visits_done',
     'new_visits_done',
     'repeat_visits_done',
+    'treatment_conversion_base',
+    'aggressive_sales_conv_gain_pp',
     'treatment_conversion',
     'treatment_patients',
     'new_treatment_patients',
@@ -1364,6 +1509,8 @@ function getRoundResultsHeaders_() {
     'doctor_cost',
     'training_share',
     'training_effect_month',
+    'aggressive_sales_rep_penalty',
+    'sales_bonus_cost',
     'total_cost',
     'financial_result',
     'cash_balance_next',
@@ -1443,6 +1590,17 @@ function validateRequiredTechParameters_(techParams) {
   const marketPressureRetention = getRequiredNumber_(techParams, 'market_pressure_retention', 'TECH_PARAMETERS');
   const adsToMarketPressure = getRequiredNumber_(techParams, 'k_ads_to_market_pressure', 'TECH_PARAMETERS');
   const priceDeviationCoef = getRequiredNumber_(techParams, 'k_price_deviation_to_conversion', 'TECH_PARAMETERS');
+  const aggressiveSalesThresholdPct = getRequiredNumber_(techParams, 'aggressive_sales_threshold_pct', 'TECH_PARAMETERS');
+  const aggressiveSalesConvTargetPct = getRequiredNumber_(techParams, 'aggressive_sales_conv_target_pct', 'TECH_PARAMETERS');
+  const aggressiveSalesConvCapPct = getRequiredNumber_(techParams, 'aggressive_sales_conv_cap_pct', 'TECH_PARAMETERS');
+  const aggressiveSalesRepSoftPct = getRequiredNumber_(techParams, 'aggressive_sales_rep_soft_pct', 'TECH_PARAMETERS');
+  const aggressiveSalesRepMidPct = getRequiredNumber_(techParams, 'aggressive_sales_rep_mid_pct', 'TECH_PARAMETERS');
+  const aggressiveSalesRepCapPct = getRequiredNumber_(techParams, 'aggressive_sales_rep_cap_pct', 'TECH_PARAMETERS');
+  const aggressiveSalesConvGainAtTargetPp = getRequiredNumber_(techParams, 'aggressive_sales_conv_gain_at_target_pp', 'TECH_PARAMETERS');
+  const aggressiveSalesConvGainMaxPp = getRequiredNumber_(techParams, 'aggressive_sales_conv_gain_max_pp', 'TECH_PARAMETERS');
+  const aggressiveSalesRepPenaltyAtSoft = getRequiredNumber_(techParams, 'aggressive_sales_rep_penalty_at_soft', 'TECH_PARAMETERS');
+  const aggressiveSalesRepPenaltyAtMid = getRequiredNumber_(techParams, 'aggressive_sales_rep_penalty_at_mid', 'TECH_PARAMETERS');
+  const aggressiveSalesRepPenaltyCap = getRequiredNumber_(techParams, 'aggressive_sales_rep_penalty_cap', 'TECH_PARAMETERS');
 
   if (marketPriceIndexMin <= 0) throw new Error('TECH_PARAMETERS: market_price_index_min должен быть > 0.');
   if (marketPriceIndexMax <= 0) throw new Error('TECH_PARAMETERS: market_price_index_max должен быть > 0.');
@@ -1454,6 +1612,17 @@ function validateRequiredTechParameters_(techParams) {
   }
   if (adsToMarketPressure < 0) throw new Error('TECH_PARAMETERS: k_ads_to_market_pressure должен быть >= 0.');
   if (priceDeviationCoef < 0) throw new Error('TECH_PARAMETERS: k_price_deviation_to_conversion должен быть >= 0.');
+  if (aggressiveSalesThresholdPct < 0) throw new Error('TECH_PARAMETERS: aggressive_sales_threshold_pct должен быть >= 0.');
+  if (aggressiveSalesConvTargetPct <= aggressiveSalesThresholdPct) throw new Error('TECH_PARAMETERS: aggressive_sales_conv_target_pct должен быть > aggressive_sales_threshold_pct.');
+  if (aggressiveSalesConvCapPct <= aggressiveSalesConvTargetPct) throw new Error('TECH_PARAMETERS: aggressive_sales_conv_cap_pct должен быть > aggressive_sales_conv_target_pct.');
+  if (aggressiveSalesRepSoftPct <= aggressiveSalesThresholdPct) throw new Error('TECH_PARAMETERS: aggressive_sales_rep_soft_pct должен быть > aggressive_sales_threshold_pct.');
+  if (aggressiveSalesRepMidPct <= aggressiveSalesRepSoftPct) throw new Error('TECH_PARAMETERS: aggressive_sales_rep_mid_pct должен быть > aggressive_sales_rep_soft_pct.');
+  if (aggressiveSalesRepCapPct <= aggressiveSalesRepMidPct) throw new Error('TECH_PARAMETERS: aggressive_sales_rep_cap_pct должен быть > aggressive_sales_rep_mid_pct.');
+  if (aggressiveSalesConvGainAtTargetPp < 0) throw new Error('TECH_PARAMETERS: aggressive_sales_conv_gain_at_target_pp должен быть >= 0.');
+  if (aggressiveSalesConvGainMaxPp < aggressiveSalesConvGainAtTargetPp) throw new Error('TECH_PARAMETERS: aggressive_sales_conv_gain_max_pp должен быть >= aggressive_sales_conv_gain_at_target_pp.');
+  if (aggressiveSalesRepPenaltyAtSoft < 0) throw new Error('TECH_PARAMETERS: aggressive_sales_rep_penalty_at_soft должен быть >= 0.');
+  if (aggressiveSalesRepPenaltyAtMid < aggressiveSalesRepPenaltyAtSoft) throw new Error('TECH_PARAMETERS: aggressive_sales_rep_penalty_at_mid должен быть >= aggressive_sales_rep_penalty_at_soft.');
+  if (aggressiveSalesRepPenaltyCap < aggressiveSalesRepPenaltyAtMid) throw new Error('TECH_PARAMETERS: aggressive_sales_rep_penalty_cap должен быть >= aggressive_sales_rep_penalty_at_mid.');
 }
 
 function computeMarketContext_(sessionConfig, techParams) {
