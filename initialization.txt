@@ -12,6 +12,7 @@
 const INITIALIZATION_CONFIG = {
   startSheetName: 'START_SETUP',
   techSheetName: 'TECH_PARAMETERS',
+  scenariosSheetName: '14_Scenarios',
   coefficientsSheetName: '08_Coefficients',
   coefficientsExampleValueHeader: 'Пример значения (input)',
   constantsSheetName: '07_Constants',
@@ -57,8 +58,14 @@ const REQUIRED_COEFFICIENT_CODES = [
   'market_pressure_retention',
   'market_pressure_units_start',
   'k_ads_to_market_pressure',
-  'k_economy_to_market_price',
-  'k_competition_to_market_price',
+  'k_economy_to_market_per_point',
+  'economy_market_index_min',
+  'economy_market_index_max',
+  'k_competition_to_cpl_per_point',
+  'competition_cpl_index_min',
+  'competition_cpl_index_max',
+  'k_economy_to_market_price_per_point',
+  'k_competition_to_market_price_per_point',
   'market_price_index_min',
   'market_price_index_max',
   'k_price_deviation_to_conversion',
@@ -148,6 +155,7 @@ function cleanupDefaultSheetInNewSession_(ss, cfg) {
     [cfg.startSheetName]: true,
     [cfg.techSheetName]: true,
     [cfg.lotListSheetName]: true,
+    [cfg.scenariosSheetName]: true,
     SESSION_CONFIG: true,
     TEAM_STATE: true,
     ROUND_RESULTS: true,
@@ -198,7 +206,9 @@ function bootstrapRequiredSheetsInNewSession_(sourceSs, targetSs, cfg) {
   }
 
   const lotSheet = getOrCreateSheetForInit_(targetSs, cfg.lotListSheetName);
+  const scenariosSheet = getOrCreateSheetForInit_(targetSs, cfg.scenariosSheetName);
   const copiedLot = copySheetValuesByName_(sourceSs, lotSheet, cfg.lotListSheetName);
+  const copiedScenarios = copySheetValuesByName_(sourceSs, scenariosSheet, cfg.scenariosSheetName);
 
   startSheet.clear();
   techSheet.clear();
@@ -208,6 +218,9 @@ function bootstrapRequiredSheetsInNewSession_(sourceSs, targetSs, cfg) {
 
   if (!copiedLot) {
     ensureLotListTemplateForInit_(lotSheet);
+  }
+  if (!copiedScenarios) {
+    ensureScenariosTemplateForInit_(scenariosSheet);
   }
 
   return { startSheet, techSheet };
@@ -371,6 +384,7 @@ function ensureStartSetupTemplateForInit_(sheet, sourceMarkerText) {
     ['ROOMS','visit_rooms','Приемные кабинеты',0,'Ручной ввод','player','visit_rooms + ftl_rooms = total'],
     ['ROOMS','ftl_rooms','ФТЛ кабинеты',0,'Ручной ввод','player','visit_rooms + ftl_rooms = total'],
     ['HR','doctors_start','Врачей на старте',0,'Ручной ввод','player','<= total_cabinets*2'],
+    ['SCENARIO','selected_scenario_id','ID выбранного сценария','', 'Ручной ввод','player','Выбор сценария внешней среды по раундам'],
     ['ENVIRONMENT','env_economy','Экономика среды','',sourceMarkerText,'model','Параметр среды сессии'],
     ['ENVIRONMENT','env_competition','Конкуренция среды','',sourceMarkerText,'model','Параметр среды сессии'],
     ['ENVIRONMENT','env_total_market','Общий размер рынка','',sourceMarkerText,'model','Параметр среды сессии'],
@@ -391,6 +405,20 @@ function ensureStartSetupTemplateForInit_(sheet, sourceMarkerText) {
     const f = bodyRows[r - 2][3];
     sheet.getRange(r,4).setFormula(f);
   }
+}
+
+function ensureScenariosTemplateForInit_(sheet) {
+  if (sheet.getLastRow() > 0) return;
+  const headers = [
+    'scenario_id',
+    'scenario_name',
+    'round_no',
+    'env_economy',
+    'env_competition',
+    'round_narrative'
+  ];
+  sheet.clear();
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
 }
 
 function applyLotBindingsInStartSetup_(ss) {
@@ -489,6 +517,17 @@ function buildTechMasterRegistryRows_(ss) {
     ['MODEL','market_pressure_retention', pickRequiredCoeff('market_pressure_retention'), 'Required from 08_Coefficients'],
     ['MODEL','market_pressure_units_start', pickRequiredCoeff('market_pressure_units_start'), 'Required from 08_Coefficients'],
     ['MODEL','k_ads_to_market_pressure', pickRequiredCoeff('k_ads_to_market_pressure'), 'Required from 08_Coefficients'],
+    ['MODEL','k_economy_to_market_per_point', pickRequiredCoeff('k_economy_to_market_per_point'), 'Required from 08_Coefficients'],
+    ['MODEL','economy_market_index_min', pickRequiredCoeff('economy_market_index_min'), 'Required from 08_Coefficients'],
+    ['MODEL','economy_market_index_max', pickRequiredCoeff('economy_market_index_max'), 'Required from 08_Coefficients'],
+    ['MODEL','k_competition_to_cpl_per_point', pickRequiredCoeff('k_competition_to_cpl_per_point'), 'Required from 08_Coefficients'],
+    ['MODEL','competition_cpl_index_min', pickRequiredCoeff('competition_cpl_index_min'), 'Required from 08_Coefficients'],
+    ['MODEL','competition_cpl_index_max', pickRequiredCoeff('competition_cpl_index_max'), 'Required from 08_Coefficients'],
+    ['MODEL','k_economy_to_market_price_per_point', pickRequiredCoeff('k_economy_to_market_price_per_point'), 'Required from 08_Coefficients'],
+    ['MODEL','k_competition_to_market_price_per_point', pickRequiredCoeff('k_competition_to_market_price_per_point'), 'Required from 08_Coefficients'],
+    ['MODEL','market_price_index_min', pickRequiredCoeff('market_price_index_min'), 'Required from 08_Coefficients'],
+    ['MODEL','market_price_index_max', pickRequiredCoeff('market_price_index_max'), 'Required from 08_Coefficients'],
+    ['MODEL','k_price_deviation_to_conversion', pickRequiredCoeff('k_price_deviation_to_conversion'), 'Required from 08_Coefficients'],
     ['MODEL','base_booking_rate', pickRequiredCoeff('base_booking_rate'), 'Required from 08_Coefficients'],
     ['MODEL','base_treatment_conversion', pickRequiredCoeff('base_treatment_conversion'), 'Required from 08_Coefficients'],
     ['MODEL','base_repeat_rate', pickRequiredCoeff('base_repeat_rate'), 'Required from 08_Coefficients'],

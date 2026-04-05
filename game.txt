@@ -10,6 +10,7 @@
 const GAME_CONFIG = {
   startSheetName: 'START_SETUP',
   techSheetName: 'TECH_PARAMETERS',
+  scenariosSheetName: '14_Scenarios',
   sessionConfigSheetName: 'SESSION_CONFIG',
   teamStateSheetName: 'TEAM_STATE',
   roundResultsSheetName: 'ROUND_RESULTS',
@@ -27,6 +28,8 @@ const REQUIRED_START_SETUP_ENV_FIELDS = [
   'market_avg_visit_price_base',
   'market_avg_procedure_price_base'
 ];
+
+const SCENARIO_ROUNDS_COUNT = 12;
 
 const REQUIRED_TECH_PARAMETER_CODES = [
   'alpha',
@@ -56,8 +59,14 @@ const REQUIRED_TECH_PARAMETER_CODES = [
   'market_pressure_retention',
   'market_pressure_units_start',
   'k_ads_to_market_pressure',
-  'k_economy_to_market_price',
-  'k_competition_to_market_price',
+  'k_economy_to_market_per_point',
+  'economy_market_index_min',
+  'economy_market_index_max',
+  'k_competition_to_cpl_per_point',
+  'competition_cpl_index_min',
+  'competition_cpl_index_max',
+  'k_economy_to_market_price_per_point',
+  'k_competition_to_market_price_per_point',
   'market_price_index_min',
   'market_price_index_max',
   'k_price_deviation_to_conversion',
@@ -110,8 +119,14 @@ const TECH_PARAMETER_DEFAULT_ROWS = [
   ['MODEL', 'k_ads_to_market_pressure', 1, 'Лиды рекламы -> market pressure'],
   ['MODEL', 'k_reputation_to_organic', 0.8, 'Репутация→органика'],
   ['MODEL', 'k_location_to_organic', 0.5, 'Локация→органика'],
-  ['MODEL', 'k_economy_to_market_price', 0, 'Экономика→индекс рыночной цены'],
-  ['MODEL', 'k_competition_to_market_price', 0, 'Конкуренция→индекс рыночной цены'],
+  ['MODEL', 'k_economy_to_market_per_point', 0.01, 'Экономика→индекс эффективного размера рынка за 1 п.'],
+  ['MODEL', 'economy_market_index_min', 0.5, 'Минимальный индекс размера рынка'],
+  ['MODEL', 'economy_market_index_max', 1.5, 'Максимальный индекс размера рынка'],
+  ['MODEL', 'k_competition_to_cpl_per_point', 0.01, 'Конкуренция→индекс CPL за 1 п.'],
+  ['MODEL', 'competition_cpl_index_min', 0.5, 'Минимальный индекс CPL'],
+  ['MODEL', 'competition_cpl_index_max', 1.5, 'Максимальный индекс CPL'],
+  ['MODEL', 'k_economy_to_market_price_per_point', 0, 'Экономика→индекс рыночной цены за 1 п.'],
+  ['MODEL', 'k_competition_to_market_price_per_point', 0, 'Конкуренция→индекс рыночной цены за 1 п.'],
   ['MODEL', 'market_price_index_min', 0.85, 'Минимальный индекс рыночной цены'],
   ['MODEL', 'market_price_index_max', 1.15, 'Максимальный индекс рыночной цены'],
   ['MODEL', 'k_price_deviation_to_conversion', 0.5, 'Отклонение цены→конверсия'],
@@ -220,12 +235,19 @@ function initializeSessionFromStartSetup() {
 
   const startSheet = mustGetSheet_(ss, cfg.startSheetName);
   const techSheet = getOrCreateSheet_(ss, cfg.techSheetName);
+  const scenariosSheet = mustGetSheet_(ss, cfg.scenariosSheetName);
   const sessionConfigSheet = getOrCreateSheet_(ss, cfg.sessionConfigSheetName);
   const teamStateSheet = getOrCreateSheet_(ss, cfg.teamStateSheetName);
   const roundResultsSheet = getOrCreateSheet_(ss, cfg.roundResultsSheetName);
 
   const startSetup = readStartSetup_(startSheet);
   validateStartSetup_(startSetup);
+  const selectedScenarioId = String(startSetup.selected_scenario_id || '').trim();
+  if (!selectedScenarioId) throw new Error('START_SETUP: selected_scenario_id обязателен.');
+  const scenarioRows = readScenarios_(scenariosSheet);
+  validateScenarioSheet_(scenarioRows);
+  const scenarioMeta = getScenarioMeta_(scenarioRows, selectedScenarioId);
+  assertScenarioHasFullRounds_(scenarioRows, selectedScenarioId);
 
   ensureTechParametersDefaults_(techSheet);
   const techParams = readTechParamsMap_(techSheet);
@@ -238,11 +260,11 @@ function initializeSessionFromStartSetup() {
   clearSheetCompletely_(teamStateSheet);
   clearSheetCompletely_(roundResultsSheet);
 
-  writeSessionConfigSheet_(sessionConfigSheet, startSetup, derived, techParams, cfg);
+  writeSessionConfigSheet_(sessionConfigSheet, startSetup, derived, techParams, cfg, scenarioMeta);
   const sessionConfig = readSessionConfigMap_(sessionConfigSheet);
   const runtimeTeamIdentity = getRuntimeTeamIdentity_(sessionConfigSheet, cfg);
   writeTeamStateSheet_(teamStateSheet, startSetup, derived, techParams, runtimeTeamIdentity);
-  writeRoundResultsBaseline_(roundResultsSheet, startSetup, derived, techParams, sessionConfig, runtimeTeamIdentity);
+  writeRoundResultsBaseline_(roundResultsSheet, startSetup, derived, techParams, sessionConfig, runtimeTeamIdentity, scenarioRows);
 
   SpreadsheetApp.flush();
     SpreadsheetApp.getUi().alert(
@@ -261,17 +283,22 @@ function prepareRoundInputForNextMonth() {
   const roundInputSheet = getOrCreateSheet_(ss, cfg.roundInputSheetName);
   const sessionConfigSheet = mustGetSheet_(ss, cfg.sessionConfigSheetName);
   const roundResultsSheet = mustGetSheet_(ss, cfg.roundResultsSheetName);
+  const scenariosSheet = mustGetSheet_(ss, cfg.scenariosSheetName);
   const techSheet = getOrCreateSheet_(ss, cfg.techSheetName);
 
   ensureTechParametersDefaults_(techSheet);
 
   const sessionConfig = readSessionConfigMap_(sessionConfigSheet);
+  const scenariosRows = readScenarios_(scenariosSheet);
+  validateScenarioSheet_(scenariosRows);
   const runtimeTeamIdentity = getRuntimeTeamIdentity_(sessionConfigSheet, cfg);
   const latestState = getLatestTeamState_(teamStateSheet, runtimeTeamIdentity.team_id);
   const latestRoundResult = getLatestRoundResult_(roundResultsSheet, runtimeTeamIdentity.team_id);
   const techParams = readTechParamsMap_(techSheet);
 
   const nextRoundNo = Number(latestState.round_no) + 1;
+  const selectedScenarioId = String(sessionConfig.selected_scenario_id || '').trim();
+  const roundEnvironment = resolveRoundEnvironment_(scenariosRows, selectedScenarioId, nextRoundNo, sessionConfig);
 
   ensureRoundInputHeaders_(roundInputSheet);
 
@@ -284,7 +311,7 @@ function prepareRoundInputForNextMonth() {
   }
 
   validateRequiredTechParameters_(techParams);
-  const initialMarketContext = computeMarketContext_(sessionConfig, techParams);
+  const initialMarketContext = computeMarketContext_(roundEnvironment.env_economy, roundEnvironment.env_competition, sessionConfig, techParams);
 
   const defaultVisitPrice = latestRoundResult && Number(latestRoundResult.round_no) >= 1
     ? Number(latestRoundResult.visit_price || 0)
@@ -343,7 +370,13 @@ function prepareRoundInputForNextMonth() {
     comment: 'Autogenerated defaults'
   });
 
-    SpreadsheetApp.getUi().alert(`ROUND_INPUT подготовлен для round_no=${nextRoundNo}.`);
+    SpreadsheetApp.getUi().alert(
+      `ROUND_INPUT подготовлен для round_no=${nextRoundNo}.\n` +
+      `Сценарий: ${roundEnvironment.scenario_name}\n` +
+      `Экономика: ${roundEnvironment.env_economy}\n` +
+      `Конкуренция: ${roundEnvironment.env_competition}\n` +
+      `Нарратив: ${roundEnvironment.round_narrative || '-'}`
+    );
   });
 }
 
@@ -356,12 +389,15 @@ function runNextMonthRound() {
   const teamStateSheet = mustGetSheet_(ss, cfg.teamStateSheetName);
   const roundResultsSheet = mustGetSheet_(ss, cfg.roundResultsSheetName);
   const roundInputSheet = mustGetSheet_(ss, cfg.roundInputSheetName);
+  const scenariosSheet = mustGetSheet_(ss, cfg.scenariosSheetName);
   const techSheet = getOrCreateSheet_(ss, cfg.techSheetName);
 
   ensureTechParametersDefaults_(techSheet);
 
   const runtimeTeamIdentity = getRuntimeTeamIdentity_(sessionConfigSheet, cfg);
   const sessionConfig = readSessionConfigMap_(sessionConfigSheet);
+  const scenariosRows = readScenarios_(scenariosSheet);
+  validateScenarioSheet_(scenariosRows);
   const techParams = readTechParamsMap_(techSheet);
   validateRequiredTechParameters_(techParams);
   const latestState = getLatestTeamState_(teamStateSheet, runtimeTeamIdentity.team_id);
@@ -373,6 +409,7 @@ function runNextMonthRound() {
 
   const calc = calculateMonthRound_({
     sessionConfig,
+    scenariosRows,
     techParams,
     latestState,
     roundInput,
@@ -409,6 +446,7 @@ function autoRunToRound12() {
     const teamStateSheet = mustGetSheet_(ss, cfg.teamStateSheetName);
     const roundResultsSheet = getOrCreateSheet_(ss, cfg.roundResultsSheetName);
     const roundInputSheet = getOrCreateSheet_(ss, cfg.roundInputSheetName);
+    const scenariosSheet = mustGetSheet_(ss, cfg.scenariosSheetName);
     const techSheet = getOrCreateSheet_(ss, cfg.techSheetName);
 
     ensureTechParametersDefaults_(techSheet);
@@ -416,6 +454,8 @@ function autoRunToRound12() {
 
     const runtimeTeamIdentity = getRuntimeTeamIdentity_(sessionConfigSheet, cfg);
     const sessionConfig = readSessionConfigMap_(sessionConfigSheet);
+    const scenariosRows = readScenarios_(scenariosSheet);
+    validateScenarioSheet_(scenariosRows);
     const techParams = readTechParamsMap_(techSheet);
     validateRequiredTechParameters_(techParams);
 
@@ -447,6 +487,7 @@ function autoRunToRound12() {
 
       const calc = calculateMonthRound_({
         sessionConfig,
+        scenariosRows,
         techParams,
         latestState,
         roundInput,
@@ -512,6 +553,7 @@ function validateStartSetup_(setup) {
     'ftl_rooms',
     'doctors_start'
   ];
+  requiredFields.push('selected_scenario_id');
   Array.prototype.push.apply(requiredFields, REQUIRED_START_SETUP_ENV_FIELDS);
 
   const missing = requiredFields.filter(f => {
@@ -574,7 +616,7 @@ function deriveInitialSessionValues_(setup, tech) {
   };
 }
 
-function writeSessionConfigSheet_(sheet, setup, derived, tech, cfg) {
+function writeSessionConfigSheet_(sheet, setup, derived, tech, cfg, scenarioMeta) {
   const initialState = buildInitialStateConfig_(tech);
   const rows = [
     ['block', 'parameter_code', 'value', 'comment'],
@@ -607,6 +649,8 @@ function writeSessionConfigSheet_(sheet, setup, derived, tech, cfg) {
     ['ENVIRONMENT', 'env_base_organic', getRequiredNumber_(setup, 'env_base_organic', 'START_SETUP'), 'Базовая органика'],
     ['ENVIRONMENT', 'market_avg_visit_price_base', getRequiredNumber_(setup, 'market_avg_visit_price_base', 'START_SETUP'), 'Базовая среднерыночная цена приема'],
     ['ENVIRONMENT', 'market_avg_procedure_price_base', getRequiredNumber_(setup, 'market_avg_procedure_price_base', 'START_SETUP'), 'Базовая среднерыночная цена процедуры'],
+    ['SCENARIO', 'selected_scenario_id', scenarioMeta.scenario_id, 'Выбранный сценарий'],
+    ['SCENARIO', 'selected_scenario_name', scenarioMeta.scenario_name, 'Название выбранного сценария'],
 
     ['LOAD_POLICY', 'max_doctor_load_percent', derived.max_doctor_load_percent, 'Макс. загрузка'],
     ['LOAD_POLICY', 'load_factor', derived.load_factor, 'Коэффициент мощности'],
@@ -666,7 +710,7 @@ function writeTeamStateSheet_(sheet, setup, derived, tech, runtimeTeamIdentity) 
   formatSimpleSheet_(sheet, headers.length);
 }
 
-function writeRoundResultsBaseline_(sheet, setup, derived, tech, sessionConfig, runtimeTeamIdentity) {
+function writeRoundResultsBaseline_(sheet, setup, derived, tech, sessionConfig, runtimeTeamIdentity, scenariosRows) {
   const headers = getRoundResultsHeaders_();
   validateRequiredTechParameters_(tech);
   const envTotalMarket = getRequiredNumber_(sessionConfig, 'env_total_market', 'SESSION_CONFIG');
@@ -677,7 +721,11 @@ function writeRoundResultsBaseline_(sheet, setup, derived, tech, sessionConfig, 
   const beta = getRequiredNumber_(tech, 'beta', 'TECH_PARAMETERS');
   const effectiveCpl = baseCpl * (1 + alpha * Math.pow(pressureShareStart, beta));
   const marketShareStart = getNumberOrDefault_(tech, 'market_share_start', 0.05);
-  const marketContext = computeMarketContext_(sessionConfig, tech);
+  const selectedScenarioId = String(sessionConfig.selected_scenario_id || '').trim();
+  const scenarioMeta = getScenarioMeta_(scenariosRows, selectedScenarioId);
+  const baselineEnvEconomy = getRequiredNumber_(sessionConfig, 'env_economy', 'SESSION_CONFIG');
+  const baselineEnvCompetition = getRequiredNumber_(sessionConfig, 'env_competition', 'SESSION_CONFIG');
+  const marketContext = computeMarketContext_(baselineEnvEconomy, baselineEnvCompetition, sessionConfig, tech);
 
   const row = [
     0,
@@ -703,8 +751,14 @@ function writeRoundResultsBaseline_(sheet, setup, derived, tech, sessionConfig, 
     marketShareStart,
     marketPressureUnitsStart,
     pressureShareStart,
-    getRequiredNumber_(sessionConfig, 'env_economy', 'SESSION_CONFIG'),
-    getRequiredNumber_(sessionConfig, 'env_competition', 'SESSION_CONFIG'),
+    selectedScenarioId,
+    scenarioMeta.scenario_name,
+    '',
+    baselineEnvEconomy,
+    baselineEnvCompetition,
+    1,
+    envTotalMarket,
+    1,
     marketContext.market_price_index,
     marketContext.market_avg_visit_price,
     marketContext.market_avg_procedure_price,
@@ -864,8 +918,122 @@ function validateRoundInput_(roundInput, latestState) {
   if (roundInput.aggressive_sales_pct < 0 || roundInput.aggressive_sales_pct > 100) throw new Error('aggressive_sales_pct должен быть в диапазоне [0; 100].');
 }
 
+function readScenarios_(sheet) {
+  const values = sheet.getDataRange().getValues();
+  if (!values || values.length < 2) {
+    throw new Error('Лист 14_Scenarios пуст или не содержит данных сценариев.');
+  }
+
+  const headerMap = buildHeaderMap_(values[0].map(v => String(v || '').trim()));
+  const requiredHeaders = ['scenario_id', 'scenario_name', 'round_no', 'env_economy', 'env_competition', 'round_narrative'];
+  const missingHeaders = requiredHeaders.filter(key => headerMap[key] === undefined);
+  if (missingHeaders.length) {
+    throw new Error(`14_Scenarios: отсутствуют обязательные колонки: ${missingHeaders.join(', ')}`);
+  }
+
+  const rows = [];
+  for (let r = 1; r < values.length; r++) {
+    const row = values[r];
+    const scenarioId = String(row[headerMap.scenario_id] || '').trim();
+    const scenarioName = String(row[headerMap.scenario_name] || '').trim();
+    if (!scenarioId && !scenarioName) continue;
+    rows.push({
+      scenario_id: scenarioId,
+      scenario_name: scenarioName,
+      round_no: row[headerMap.round_no],
+      env_economy: row[headerMap.env_economy],
+      env_competition: row[headerMap.env_competition],
+      round_narrative: row[headerMap.round_narrative] === null || row[headerMap.round_narrative] === undefined
+        ? ''
+        : String(row[headerMap.round_narrative])
+    });
+  }
+
+  if (!rows.length) throw new Error('14_Scenarios: не найдено ни одной заполненной строки сценария.');
+  return rows;
+}
+
+function validateScenarioSheet_(rows) {
+  const byScenario = {};
+  const pairUniq = {};
+
+  rows.forEach((row, idx) => {
+    const rowNo = idx + 2;
+    if (!row.scenario_id) throw new Error(`14_Scenarios: row ${rowNo} — scenario_id обязателен.`);
+    if (!row.scenario_name) throw new Error(`14_Scenarios: row ${rowNo} — scenario_name обязателен.`);
+    const roundNo = parseRequiredNumberValue_(row.round_no, `14_Scenarios.round_no (row ${rowNo})`);
+    if (Math.floor(roundNo) !== roundNo) throw new Error(`14_Scenarios: row ${rowNo} — round_no должен быть целым числом.`);
+    if (roundNo < 1 || roundNo > SCENARIO_ROUNDS_COUNT) throw new Error(`14_Scenarios: row ${rowNo} — round_no должен быть в диапазоне [1; ${SCENARIO_ROUNDS_COUNT}].`);
+    const envEconomy = parseRequiredNumberValue_(row.env_economy, `14_Scenarios.env_economy (row ${rowNo})`);
+    const envCompetition = parseRequiredNumberValue_(row.env_competition, `14_Scenarios.env_competition (row ${rowNo})`);
+    if (envEconomy < 0 || envEconomy > 100) throw new Error(`14_Scenarios: row ${rowNo} — env_economy должен быть в диапазоне [0; 100].`);
+    if (envCompetition < 0 || envCompetition > 100) throw new Error(`14_Scenarios: row ${rowNo} — env_competition должен быть в диапазоне [0; 100].`);
+
+    const pairKey = `${row.scenario_id}::${roundNo}`;
+    if (pairUniq[pairKey]) throw new Error(`14_Scenarios: пара (scenario_id, round_no) должна быть уникальна. Конфликт: ${pairKey}.`);
+    pairUniq[pairKey] = true;
+
+    if (!byScenario[row.scenario_id]) byScenario[row.scenario_id] = { scenario_name: row.scenario_name, rounds: {} };
+    const bucket = byScenario[row.scenario_id];
+    if (bucket.scenario_name !== row.scenario_name) {
+      throw new Error(`14_Scenarios: в scenario_id=${row.scenario_id} найдено несколько scenario_name.`);
+    }
+    bucket.rounds[roundNo] = true;
+  });
+
+  Object.keys(byScenario).forEach(scenarioId => {
+    for (let roundNo = 1; roundNo <= SCENARIO_ROUNDS_COUNT; roundNo += 1) {
+      if (!byScenario[scenarioId].rounds[roundNo]) {
+        throw new Error(`14_Scenarios: для scenario_id=${scenarioId} отсутствует строка round_no=${roundNo}.`);
+      }
+    }
+  });
+}
+
+function getScenarioMeta_(rows, scenarioId) {
+  const normalizedScenarioId = String(scenarioId || '').trim();
+  if (!normalizedScenarioId) throw new Error('SCENARIO: selected_scenario_id не задан.');
+  const row = rows.find(item => String(item.scenario_id || '').trim() === normalizedScenarioId);
+  if (!row) throw new Error(`SCENARIO: сценарий "${normalizedScenarioId}" не найден в 14_Scenarios.`);
+  return {
+    scenario_id: normalizedScenarioId,
+    scenario_name: String(row.scenario_name || '').trim()
+  };
+}
+
+function assertScenarioHasFullRounds_(rows, scenarioId) {
+  for (let roundNo = 1; roundNo <= SCENARIO_ROUNDS_COUNT; roundNo += 1) {
+    getScenarioRowForRound_(rows, scenarioId, roundNo);
+  }
+}
+
+function getScenarioRowForRound_(rows, scenarioId, roundNo) {
+  const targetScenarioId = String(scenarioId || '').trim();
+  const targetRoundNo = Number(roundNo);
+  const row = rows.find(item =>
+    String(item.scenario_id || '').trim() === targetScenarioId &&
+    Number(item.round_no) === targetRoundNo
+  );
+  if (!row) throw new Error(`SCENARIO: для scenario_id=${targetScenarioId} не найден round_no=${targetRoundNo}.`);
+  return row;
+}
+
+function resolveRoundEnvironment_(scenariosRows, selectedScenarioId, roundNo, sessionConfig) {
+  const meta = getScenarioMeta_(scenariosRows, selectedScenarioId);
+  const row = getScenarioRowForRound_(scenariosRows, meta.scenario_id, roundNo);
+  return {
+    scenario_id: meta.scenario_id,
+    scenario_name: meta.scenario_name,
+    round_narrative: String(row.round_narrative || ''),
+    env_economy: parseRequiredNumberValue_(row.env_economy, `14_Scenarios.env_economy (scenario_id=${meta.scenario_id}, round_no=${roundNo})`),
+    env_competition: parseRequiredNumberValue_(row.env_competition, `14_Scenarios.env_competition (scenario_id=${meta.scenario_id}, round_no=${roundNo})`),
+    env_total_market_base: getRequiredNumber_(sessionConfig, 'env_total_market', 'SESSION_CONFIG')
+  };
+}
+
 function calculateMonthRound_(ctx) {
   const sessionConfig = ctx.sessionConfig;
+  const scenariosRows = ctx.scenariosRows;
   const tech = ctx.techParams;
   const prev = ctx.latestState;
   const inp = ctx.roundInput;
@@ -886,11 +1054,13 @@ function calculateMonthRound_(ctx) {
   const ftlRooms = Number(prev.ftl_rooms);
   const totalDoctorSlots = Number(prev.total_doctor_slots);
 
-  const envCompetition = getRequiredNumber_(sessionConfig, 'env_competition', 'SESSION_CONFIG');
-  const envTotalMarket = getRequiredNumber_(sessionConfig, 'env_total_market', 'SESSION_CONFIG');
+  const selectedScenarioId = String(sessionConfig.selected_scenario_id || '').trim();
+  const roundEnvironment = resolveRoundEnvironment_(scenariosRows, selectedScenarioId, roundNo, sessionConfig);
+  const envCompetition = roundEnvironment.env_competition;
+  const envEconomyFromScenario = roundEnvironment.env_economy;
+  const envTotalMarketBase = getRequiredNumber_(sessionConfig, 'env_total_market', 'SESSION_CONFIG');
   const envBaseOrganic = getRequiredNumber_(sessionConfig, 'env_base_organic', 'SESSION_CONFIG');
-  const envEconomyFromSession = getRequiredNumber_(sessionConfig, 'env_economy', 'SESSION_CONFIG');
-  const marketContext = computeMarketContext_(sessionConfig, tech);
+  const marketContext = computeMarketContext_(envEconomyFromScenario, envCompetition, sessionConfig, tech);
 
   const locationScore = Number(sessionConfig.selected_location_score);
   // staff_comfort — интегральный показатель условий среды для персонала (в т.ч. бытовых), кухня отдельно не моделируется.
@@ -928,6 +1098,12 @@ function calculateMonthRound_(ctx) {
   const marketPressureRetention = getRequiredNumber_(tech, 'market_pressure_retention', 'TECH_PARAMETERS');
   const adsToMarketPressure = getRequiredNumber_(tech, 'k_ads_to_market_pressure', 'TECH_PARAMETERS');
   const marketPressureUnitsStart = getRequiredNumber_(tech, 'market_pressure_units_start', 'TECH_PARAMETERS');
+  const kEconomyToMarketPerPoint = getRequiredNumber_(tech, 'k_economy_to_market_per_point', 'TECH_PARAMETERS');
+  const economyMarketIndexMin = getRequiredNumber_(tech, 'economy_market_index_min', 'TECH_PARAMETERS');
+  const economyMarketIndexMax = getRequiredNumber_(tech, 'economy_market_index_max', 'TECH_PARAMETERS');
+  const kCompetitionToCplPerPoint = getRequiredNumber_(tech, 'k_competition_to_cpl_per_point', 'TECH_PARAMETERS');
+  const competitionCplIndexMin = getRequiredNumber_(tech, 'competition_cpl_index_min', 'TECH_PARAMETERS');
+  const competitionCplIndexMax = getRequiredNumber_(tech, 'competition_cpl_index_max', 'TECH_PARAMETERS');
 
   const kReputationToOrganic = getRequiredNumber_(tech, 'k_reputation_to_organic', 'TECH_PARAMETERS');
   const kLocationToOrganic = getRequiredNumber_(tech, 'k_location_to_organic', 'TECH_PARAMETERS');
@@ -986,7 +1162,19 @@ function calculateMonthRound_(ctx) {
   const visitCapacityLimited = visitCapacity * loadFactor;
   const procedureCapacityLimited = procedureCapacity * loadFactor;
 
-  const pressureShareStart = envTotalMarket > 0 ? clamp_(marketPressureUnits / envTotalMarket, 0, 1) : 0;
+  const economyMarketIndex = clamp_(
+    1 + kEconomyToMarketPerPoint * (envEconomyFromScenario - 50),
+    economyMarketIndexMin,
+    economyMarketIndexMax
+  );
+  const envTotalMarketEffective = Math.max(0, envTotalMarketBase * economyMarketIndex);
+  const competitionCplIndex = clamp_(
+    1 + kCompetitionToCplPerPoint * (envCompetition - 50),
+    competitionCplIndexMin,
+    competitionCplIndexMax
+  );
+
+  const pressureShareStart = envTotalMarketEffective > 0 ? clamp_(marketPressureUnits / envTotalMarketEffective, 0, 1) : 0;
 
   const marketingSteps = 10;
   const stepBudget = safeDiv_(marketingBudget, marketingSteps);
@@ -994,16 +1182,16 @@ function calculateMonthRound_(ctx) {
   let effectiveCpl = baseCpl * (1 + alpha * Math.pow(pressureShareStart, beta));
 
   for (let i = 1; i <= marketingSteps; i += 1) {
-    const pressureShareStep = envTotalMarket > 0
-      ? clamp_((marketPressureUnits + adsToMarketPressure * adLeads) / envTotalMarket, 0, 1)
+    const pressureShareStep = envTotalMarketEffective > 0
+      ? clamp_((marketPressureUnits + adsToMarketPressure * adLeads) / envTotalMarketEffective, 0, 1)
       : 0;
-    effectiveCpl = baseCpl * (1 + alpha * Math.pow(pressureShareStep, beta));
+    effectiveCpl = baseCpl * competitionCplIndex * (1 + alpha * Math.pow(pressureShareStep, beta));
     const stepLeads = effectiveCpl > 0 ? stepBudget / effectiveCpl : 0;
     adLeads += stepLeads;
   }
 
-  const pressureShareEnd = envTotalMarket > 0
-    ? clamp_((marketPressureUnits + adsToMarketPressure * adLeads) / envTotalMarket, 0, 1)
+  const pressureShareEnd = envTotalMarketEffective > 0
+    ? clamp_((marketPressureUnits + adsToMarketPressure * adLeads) / envTotalMarketEffective, 0, 1)
     : 0;
   const marketPressureUnitsNext = marketPressureUnits * marketPressureRetention + adsToMarketPressure * adLeads;
 
@@ -1016,9 +1204,9 @@ function calculateMonthRound_(ctx) {
   const repeatLeads = patientBase * repeatRate;
 
   const newLeadsRaw = adLeads + organicLeads;
-  const newLeads = envTotalMarket > 0 ? Math.min(newLeadsRaw, envTotalMarket) : 0;
+  const newLeads = envTotalMarketEffective > 0 ? Math.min(newLeadsRaw, envTotalMarketEffective) : 0;
   const totalLeads = newLeads + repeatLeads;
-  const marketShare = envTotalMarket > 0 ? newLeads / envTotalMarket : 0;
+  const marketShare = envTotalMarketEffective > 0 ? newLeads / envTotalMarketEffective : 0;
 
   if (marketContext.market_avg_visit_price === 0) {
     throw new Error('market_avg_visit_price не может быть равен 0 при расчете visit_price_index.');
@@ -1180,8 +1368,14 @@ function calculateMonthRound_(ctx) {
     market_share: marketShare,
     market_pressure_units_end: marketPressureUnitsNext,
     pressure_share_end: pressureShareEnd,
-    env_economy: envEconomyFromSession,
+    scenario_id: roundEnvironment.scenario_id,
+    scenario_name: roundEnvironment.scenario_name,
+    round_narrative: roundEnvironment.round_narrative,
+    env_economy: envEconomyFromScenario,
     env_competition: envCompetition,
+    economy_market_index: economyMarketIndex,
+    env_total_market_effective: envTotalMarketEffective,
+    competition_cpl_index: competitionCplIndex,
     market_price_index: marketContext.market_price_index,
     market_avg_visit_price: marketContext.market_avg_visit_price,
     market_avg_procedure_price: marketContext.market_avg_procedure_price,
@@ -1263,8 +1457,14 @@ function appendRoundResult_(sheet, calc, runtimeTeamIdentity) {
     calc.market_share,
     calc.market_pressure_units_end,
     calc.pressure_share_end,
+    calc.scenario_id,
+    calc.scenario_name,
+    calc.round_narrative,
     calc.env_economy,
     calc.env_competition,
+    calc.economy_market_index,
+    calc.env_total_market_effective,
+    calc.competition_cpl_index,
     calc.market_price_index,
     calc.market_avg_visit_price,
     calc.market_avg_procedure_price,
@@ -1480,8 +1680,14 @@ function getRoundResultsHeaders_() {
     'market_share',
     'market_pressure_units_end',
     'pressure_share_end',
+    'scenario_id',
+    'scenario_name',
+    'round_narrative',
     'env_economy',
     'env_competition',
+    'economy_market_index',
+    'env_total_market_effective',
+    'competition_cpl_index',
     'market_price_index',
     'market_avg_visit_price',
     'market_avg_procedure_price',
@@ -1587,6 +1793,14 @@ function validateRequiredTechParameters_(techParams) {
 
   const marketPriceIndexMin = getRequiredNumber_(techParams, 'market_price_index_min', 'TECH_PARAMETERS');
   const marketPriceIndexMax = getRequiredNumber_(techParams, 'market_price_index_max', 'TECH_PARAMETERS');
+  const economyMarketIndexMin = getRequiredNumber_(techParams, 'economy_market_index_min', 'TECH_PARAMETERS');
+  const economyMarketIndexMax = getRequiredNumber_(techParams, 'economy_market_index_max', 'TECH_PARAMETERS');
+  const competitionCplIndexMin = getRequiredNumber_(techParams, 'competition_cpl_index_min', 'TECH_PARAMETERS');
+  const competitionCplIndexMax = getRequiredNumber_(techParams, 'competition_cpl_index_max', 'TECH_PARAMETERS');
+  const kEconomyToMarketPerPoint = getRequiredNumber_(techParams, 'k_economy_to_market_per_point', 'TECH_PARAMETERS');
+  const kCompetitionToCplPerPoint = getRequiredNumber_(techParams, 'k_competition_to_cpl_per_point', 'TECH_PARAMETERS');
+  getRequiredNumber_(techParams, 'k_economy_to_market_price_per_point', 'TECH_PARAMETERS');
+  getRequiredNumber_(techParams, 'k_competition_to_market_price_per_point', 'TECH_PARAMETERS');
   const marketPressureRetention = getRequiredNumber_(techParams, 'market_pressure_retention', 'TECH_PARAMETERS');
   const adsToMarketPressure = getRequiredNumber_(techParams, 'k_ads_to_market_pressure', 'TECH_PARAMETERS');
   const priceDeviationCoef = getRequiredNumber_(techParams, 'k_price_deviation_to_conversion', 'TECH_PARAMETERS');
@@ -1604,9 +1818,17 @@ function validateRequiredTechParameters_(techParams) {
 
   if (marketPriceIndexMin <= 0) throw new Error('TECH_PARAMETERS: market_price_index_min должен быть > 0.');
   if (marketPriceIndexMax <= 0) throw new Error('TECH_PARAMETERS: market_price_index_max должен быть > 0.');
+  if (economyMarketIndexMin <= 0) throw new Error('TECH_PARAMETERS: economy_market_index_min должен быть > 0.');
+  if (economyMarketIndexMax <= 0) throw new Error('TECH_PARAMETERS: economy_market_index_max должен быть > 0.');
+  if (economyMarketIndexMin > economyMarketIndexMax) throw new Error('TECH_PARAMETERS: economy_market_index_min должен быть <= economy_market_index_max.');
+  if (competitionCplIndexMin <= 0) throw new Error('TECH_PARAMETERS: competition_cpl_index_min должен быть > 0.');
+  if (competitionCplIndexMax <= 0) throw new Error('TECH_PARAMETERS: competition_cpl_index_max должен быть > 0.');
+  if (competitionCplIndexMin > competitionCplIndexMax) throw new Error('TECH_PARAMETERS: competition_cpl_index_min должен быть <= competition_cpl_index_max.');
   if (marketPriceIndexMin > marketPriceIndexMax) {
     throw new Error('TECH_PARAMETERS: market_price_index_min должен быть <= market_price_index_max.');
   }
+  if (kEconomyToMarketPerPoint < 0) throw new Error('TECH_PARAMETERS: k_economy_to_market_per_point должен быть >= 0.');
+  if (kCompetitionToCplPerPoint < 0) throw new Error('TECH_PARAMETERS: k_competition_to_cpl_per_point должен быть >= 0.');
   if (marketPressureRetention < 0 || marketPressureRetention > 1) {
     throw new Error('TECH_PARAMETERS: market_pressure_retention должен быть в диапазоне [0; 1].');
   }
@@ -1625,13 +1847,11 @@ function validateRequiredTechParameters_(techParams) {
   if (aggressiveSalesRepPenaltyCap < aggressiveSalesRepPenaltyAtMid) throw new Error('TECH_PARAMETERS: aggressive_sales_rep_penalty_cap должен быть >= aggressive_sales_rep_penalty_at_mid.');
 }
 
-function computeMarketContext_(sessionConfig, techParams) {
-  const envEconomy = getRequiredNumber_(sessionConfig, 'env_economy', 'SESSION_CONFIG');
-  const envCompetition = getRequiredNumber_(sessionConfig, 'env_competition', 'SESSION_CONFIG');
+function computeMarketContext_(envEconomy, envCompetition, sessionConfig, techParams) {
   const marketAvgVisitPriceBase = getRequiredNumber_(sessionConfig, 'market_avg_visit_price_base', 'SESSION_CONFIG');
   const marketAvgProcedurePriceBase = getRequiredNumber_(sessionConfig, 'market_avg_procedure_price_base', 'SESSION_CONFIG');
-  const kEconomyToMarketPrice = getRequiredNumber_(techParams, 'k_economy_to_market_price', 'TECH_PARAMETERS');
-  const kCompetitionToMarketPrice = getRequiredNumber_(techParams, 'k_competition_to_market_price', 'TECH_PARAMETERS');
+  const kEconomyToMarketPricePerPoint = getRequiredNumber_(techParams, 'k_economy_to_market_price_per_point', 'TECH_PARAMETERS');
+  const kCompetitionToMarketPricePerPoint = getRequiredNumber_(techParams, 'k_competition_to_market_price_per_point', 'TECH_PARAMETERS');
   const marketPriceIndexMin = getRequiredNumber_(techParams, 'market_price_index_min', 'TECH_PARAMETERS');
   const marketPriceIndexMax = getRequiredNumber_(techParams, 'market_price_index_max', 'TECH_PARAMETERS');
 
@@ -1646,8 +1866,8 @@ function computeMarketContext_(sessionConfig, techParams) {
 
   const marketPriceIndex = clamp_(
     1 +
-      kEconomyToMarketPrice * ((envEconomy - 50) / 50) +
-      kCompetitionToMarketPrice * ((envCompetition - 50) / 50),
+      kEconomyToMarketPricePerPoint * (envEconomy - 50) +
+      kCompetitionToMarketPricePerPoint * (envCompetition - 50),
     marketPriceIndexMin,
     marketPriceIndexMax
   );
