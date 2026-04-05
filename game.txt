@@ -298,7 +298,11 @@ function prepareRoundInputForNextMonth() {
 
   const nextRoundNo = Number(latestState.round_no) + 1;
   const selectedScenarioId = String(sessionConfig.selected_scenario_id || '').trim();
+  const selectedScenarioName = String(sessionConfig.selected_scenario_name || '').trim();
   const roundEnvironment = resolveRoundEnvironment_(scenariosRows, selectedScenarioId, nextRoundNo, sessionConfig);
+  if (!selectedScenarioName) {
+    throw new Error('SESSION_CONFIG: отсутствует selected_scenario_name.');
+  }
 
   ensureRoundInputHeaders_(roundInputSheet);
 
@@ -322,10 +326,6 @@ function prepareRoundInputForNextMonth() {
   const maxLoadDefault = latestRoundResult && Number(latestRoundResult.round_no) >= 1
     ? Number(latestRoundResult.max_doctor_load_percent || 0)
     : getNumberOrDefault_(latestState, 'max_doctor_load_percent', 100);
-  const aggressiveSalesPctDefault = latestRoundResult && Number(latestRoundResult.round_no) >= 1
-    ? Number(latestRoundResult.aggressive_sales_pct || 0)
-    : 0;
-
   const doctorsCurrent = Number(latestState.doctors_current || 0);
   const maxVisitDoctors = Number(latestState.max_visit_doctors || 0);
   const maxFtlDoctors = Number(latestState.max_ftl_doctors || 0);
@@ -357,11 +357,15 @@ function prepareRoundInputForNextMonth() {
     round_no: nextRoundNo,
     team_id: runtimeTeamIdentity.team_id,
     team_name: runtimeTeamIdentity.team_name,
+    scenario_id: roundEnvironment.scenario_id,
+    scenario_name: roundEnvironment.scenario_name,
+    env_economy: roundEnvironment.env_economy,
+    env_competition: roundEnvironment.env_competition,
+    round_narrative: roundEnvironment.round_narrative,
     visit_price: defaultVisitPrice,
     procedure_price: defaultProcedurePrice,
     marketing_budget: getNumberOrDefault_(techParams, 'default_marketing_budget', 0),
     training_budget: getNumberOrDefault_(techParams, 'default_training_budget', 0),
-    aggressive_sales_pct: aggressiveSalesPctDefault,
     hire_count: 0,
     fire_count: 0,
     doctors_visit_assigned: doctorsVisitAssignedDefault,
@@ -374,8 +378,7 @@ function prepareRoundInputForNextMonth() {
       `ROUND_INPUT подготовлен для round_no=${nextRoundNo}.\n` +
       `Сценарий: ${roundEnvironment.scenario_name}\n` +
       `Экономика: ${roundEnvironment.env_economy}\n` +
-      `Конкуренция: ${roundEnvironment.env_competition}\n` +
-      `Нарратив: ${roundEnvironment.round_narrative || '-'}`
+      `Конкуренция: ${roundEnvironment.env_competition}`
     );
   });
 }
@@ -479,7 +482,9 @@ function autoRunToRound12() {
 
     for (let roundNo = currentRound + 1; roundNo <= 12; roundNo++) {
       if (!findRoundInputRow_(roundInputSheet, runtimeTeamIdentity.team_id, roundNo)) {
-        appendRoundInputRow_(roundInputSheet, buildRoundInputFromTemplate_(roundOneTemplate, runtimeTeamIdentity, roundNo));
+        const selectedScenarioId = String(sessionConfig.selected_scenario_id || '').trim();
+        const roundEnvironment = resolveRoundEnvironment_(scenariosRows, selectedScenarioId, roundNo, sessionConfig);
+        appendRoundInputRow_(roundInputSheet, buildRoundInputFromTemplate_(roundOneTemplate, runtimeTeamIdentity, roundNo, roundEnvironment));
       }
 
       const roundInput = readRoundInputForRound_(roundInputSheet, runtimeTeamIdentity.team_id, roundNo);
@@ -806,12 +811,28 @@ function writeRoundResultsBaseline_(sheet, setup, derived, tech, sessionConfig, 
 function ensureRoundInputHeaders_(sheet) {
   if (sheet.getLastRow() > 0) return;
   const headers = [
-    'round_no', 'team_id', 'team_name', 'visit_price', 'procedure_price',
-    'marketing_budget', 'training_budget', 'aggressive_sales_pct', 'hire_count', 'fire_count',
-    'doctors_visit_assigned', 'doctors_ftl_assigned', 'max_doctor_load_percent', 'comment'
+    'round_no',
+    'team_id',
+    'team_name',
+    'scenario_id',
+    'scenario_name',
+    'env_economy',
+    'env_competition',
+    'round_narrative',
+    'visit_price',
+    'procedure_price',
+    'marketing_budget',
+    'training_budget',
+    'hire_count',
+    'fire_count',
+    'doctors_visit_assigned',
+    'doctors_ftl_assigned',
+    'max_doctor_load_percent',
+    'comment'
   ];
   writeMatrixToSheet_(sheet, 1, 1, [headers], headers.length);
   formatSimpleSheet_(sheet, headers.length);
+  formatRoundInputNarrativeColumn_(sheet, headers);
 }
 
 function findRoundInputRow_(sheet, teamId, roundNo) {
@@ -826,26 +847,57 @@ function findRoundInputRow_(sheet, teamId, roundNo) {
   return null;
 }
 
+function formatRoundInputNarrativeColumn_(sheet, headers) {
+  const headerRow = headers || (sheet.getLastRow() > 0 ? sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0] : null);
+  if (!headerRow || !headerRow.length) return;
+  const h = buildHeaderMap_(headerRow);
+  if (h.round_narrative === undefined) return;
+
+  const col = h.round_narrative + 1;
+  const rowsToFormat = Math.max(sheet.getLastRow(), 1);
+  sheet.getRange(1, col, rowsToFormat, 1).setWrap(true).setVerticalAlignment('top');
+  sheet.setColumnWidth(col, 420);
+}
+
 function appendRoundInputRow_(sheet, data) {
   appendNormalizedRow_(sheet, [
-    data.round_no, data.team_id, data.team_name, data.visit_price, data.procedure_price,
-    data.marketing_budget, data.training_budget, data.aggressive_sales_pct, data.hire_count, data.fire_count,
-    data.doctors_visit_assigned, data.doctors_ftl_assigned, data.max_doctor_load_percent,
+    data.round_no,
+    data.team_id,
+    data.team_name,
+    data.scenario_id,
+    data.scenario_name,
+    data.env_economy,
+    data.env_competition,
+    data.round_narrative || '',
+    data.visit_price,
+    data.procedure_price,
+    data.marketing_budget,
+    data.training_budget,
+    data.hire_count,
+    data.fire_count,
+    data.doctors_visit_assigned,
+    data.doctors_ftl_assigned,
+    data.max_doctor_load_percent,
     data.comment || ''
-  ], 14);
+  ], 18);
+  formatRoundInputNarrativeColumn_(sheet);
 }
 
 
-function buildRoundInputFromTemplate_(template, runtimeTeamIdentity, roundNo) {
+function buildRoundInputFromTemplate_(template, runtimeTeamIdentity, roundNo, roundEnvironment) {
   return {
     round_no: roundNo,
     team_id: runtimeTeamIdentity.team_id,
     team_name: runtimeTeamIdentity.team_name,
+    scenario_id: roundEnvironment.scenario_id,
+    scenario_name: roundEnvironment.scenario_name,
+    env_economy: roundEnvironment.env_economy,
+    env_competition: roundEnvironment.env_competition,
+    round_narrative: roundEnvironment.round_narrative,
     visit_price: template.visit_price,
     procedure_price: template.procedure_price,
     marketing_budget: template.marketing_budget,
     training_budget: template.training_budget,
-    aggressive_sales_pct: template.aggressive_sales_pct,
     hire_count: template.hire_count,
     fire_count: template.fire_count,
     doctors_visit_assigned: template.doctors_visit_assigned,
@@ -870,13 +922,16 @@ function readRoundInputForRound_(sheet, teamId, roundNo) {
         round_no: rowRound,
         team_id: rowTeam,
         team_name: row[h.team_name],
+        scenario_id: h.scenario_id !== undefined ? String(row[h.scenario_id] || '').trim() : '',
+        scenario_name: h.scenario_name !== undefined ? String(row[h.scenario_name] || '').trim() : '',
+        env_economy: h.env_economy !== undefined ? parseRequiredNumberValue_(row[h.env_economy], 'ROUND_INPUT.env_economy') : null,
+        env_competition: h.env_competition !== undefined ? parseRequiredNumberValue_(row[h.env_competition], 'ROUND_INPUT.env_competition') : null,
+        round_narrative: h.round_narrative !== undefined ? String(row[h.round_narrative] || '') : '',
         visit_price: parseRequiredNumberValue_(row[h.visit_price], 'ROUND_INPUT.visit_price'),
         procedure_price: parseRequiredNumberValue_(row[h.procedure_price], 'ROUND_INPUT.procedure_price'),
         marketing_budget: parseRequiredNumberValue_(row[h.marketing_budget], 'ROUND_INPUT.marketing_budget'),
         training_budget: parseRequiredNumberValue_(row[h.training_budget], 'ROUND_INPUT.training_budget'),
-        aggressive_sales_pct: h.aggressive_sales_pct !== undefined
-          ? parseRequiredNumberValue_(row[h.aggressive_sales_pct], 'ROUND_INPUT.aggressive_sales_pct')
-          : 0,
+        aggressive_sales_pct: 0,
         hire_count: parseRequiredNumberValue_(row[h.hire_count], 'ROUND_INPUT.hire_count'),
         fire_count: parseRequiredNumberValue_(row[h.fire_count], 'ROUND_INPUT.fire_count'),
         doctors_visit_assigned: parseRequiredNumberValue_(row[h.doctors_visit_assigned], 'ROUND_INPUT.doctors_visit_assigned'),
